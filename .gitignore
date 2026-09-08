@@ -2,10 +2,15 @@ data/
 .ipynb_checkpoints
 .bin
 *.db
+*.csv
+*.csv.gz
+*.parquet
 
 *.parquet
 *.html
 *.csv
+data/
+
 
 .venv
 venv
