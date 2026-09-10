@@ -1,5 +1,14 @@
 # Push on git remote
 
+**Summary**
+
+cd /workspaces/mlops-zoomcamp
+git add .
+git commit -m "mon message"
+git push
+
+git status  (pour voir si aucun nouveaux fichiers n'a été oublié, même avec git add ., ça m'aie déjà arrivé)
+
 **1. Aller dans le repo**
 
 `cd /workspaces/mlops-zoomcamp`
