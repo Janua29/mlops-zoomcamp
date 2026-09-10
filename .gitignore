@@ -11,6 +11,8 @@ data/
 *.csv
 data/
 
+mlflow.db
+mlruns/
 
 .venv
 venv
