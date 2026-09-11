@@ -1,3 +1,15 @@
+# Things to check when restart the codespace
+
+conda activate mlopszoompcamp
+check the kernel in VS code
+
+MLflow UI activate : be careful to the absolute vs relative path --> when you activate MLflow UI, need to have the right adress to the .db file
+
+Note
+- git command : no need to be in the mlopszoomcamp conda env
+- for everything related to python : need to be in the right env
+
+
 # Push on git remote
 
 **Summary**
@@ -83,6 +95,18 @@ to retrieve the .db file when you relaucnh mlflow after having stop a codespace,
  ` --default-artifact-root /workspaces/mlops-zoomcamp/02-experiment-tracking/mlruns`
 
 pas besoin de ça : `mlflow ui --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db --host 0.0.0.0 --port 5000 --allowed-hosts "*" --cors-allowed-origins "*" `
+
+**Le tracking_uri de ton notebook**
+
+C'est la cause la plus probable vu ton historique. Après le redémarrage du Codespace, quel set_tracking_uri as-tu exécuté ?
+
+Si c'est encore sqlite:///mlflow.db (3 slashes, chemin relatif), ton run est écrit dans un fichier qui dépend du dossier courant du notebook — pas forcément celui que ton serveur lit.
+
+La version robuste, celle que je te recommandais :
+
+python
+`mlflow.set_tracking_uri("http://127.0.0.1:5000")`
+`mlflow.set_experiment("nyc-taxi-experiment")`
 
 In the notebook, you also need to have these two line + be sure to choose the **right kernel** (mlopszoomcamp)
 
