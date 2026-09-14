@@ -3,7 +3,7 @@
 conda activate mlopszoompcamp
 check the kernel in VS code
 
-MLflow UI activate : be careful to the absolute vs relative path --> when you activate MLflow UI, need to have the right adress to the .db file
+MLflow UI activate : be careful to the absolute vs relative path --> when you activate MLflow UI, need to have the right adress to the .db file. It is in this .db file that all your experiments/runs are registered / saved
 
 Note
 - git command : no need to be in the mlopszoomcamp conda env
@@ -13,6 +13,8 @@ Note
 # Push on git remote
 
 **Summary**
+
+From VS-code, save all the modifed files. Then
 
 cd /workspaces/mlops-zoomcamp
 git add .
@@ -96,6 +98,8 @@ to retrieve the .db file when you relaucnh mlflow after having stop a codespace,
  ` --default-artifact-root /workspaces/mlops-zoomcamp/02-experiment-tracking/mlruns`
 
  or just `mlflow ui --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db `
+
+ Indeed, in the jupyter notebook, we have written : `mlflow.set_tracking_uri("sqlite:///mlflow.db")` --> it is a relative path --> if I am in mlops-zoomcamp/01-Intro --> it will create a new mlflow.db file in mlops-zoomcamp/01-Intro --> it won't re-use the .db file in mlops-zoomcamp/02-experiment-tracking/mlflow.db `
 
 pas besoin de ça : 
 

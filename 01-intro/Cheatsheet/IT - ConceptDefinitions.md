@@ -1,0 +1,188 @@
+### URI definition
+
+Un **URI** (Uniform Resource Identifier) est simplement une chaîne de caractères qui identifie une ressource de façon non ambiguë. Sa forme générale :
+
+```
+schéma://hôte:port/chemin?paramètres
+```
+
+Le **schéma** (avant les `://`) dit *quel type de ressource et comment y accéder*, le reste dit *où elle se trouve*. Une URL n'est qu'un cas particulier d'URI (celui où la ressource est localisable sur un réseau).
+
+Dans ton exemple :
+
+```python
+mlflow.set_tracking_uri("sqlite:///mlflow.db")
+```
+
+- `sqlite` → le schéma : « les données sont dans une base SQLite »
+- `///mlflow.db` → le chemin du fichier
+
+Le triple slash surprend souvent. C'est la convention SQLAlchemy : `sqlite://` + `/` + chemin. Avec un chemin relatif tu as trois slashes (`sqlite:///mlflow.db` = fichier `mlflow.db` dans le dossier courant), avec un chemin absolu tu en as quatre (`sqlite:////home/user/mlflow.db`).
+
+Les autres tracking URIs que tu croiseras dans le cours :
+
+| URI | Signification |
+|---|---|
+| `sqlite:///mlflow.db` | base SQLite locale (fichier) |
+| `http://127.0.0.1:5000` | un serveur MLflow qui tourne en local |
+| `http://10.0.0.5:5000` | un serveur MLflow distant (ex. sur une VM EC2) |
+| `postgresql://user:pwd@host:5432/mlflow` | backend Postgres |
+| `file:///home/user/mlruns` | stockage dans des fichiers locaux (le défaut si tu ne configures rien) |
+
+Un point de vocabulaire : MLflow utilise plusieurs URIs distinctes. Le *tracking URI* pointe vers le **backend store** (paramètres, métriques, tags — les données structurées). Les artefacts (modèles, graphiques, fichiers) vont ailleurs, dans l'*artifact store*, qui a sa propre URI (`./mlruns` par défaut, ou `s3://mon-bucket/...`). C'est pour ça qu'avec SQLite tu vois quand même apparaître un dossier `mlruns/` à côté de ton `mlflow.db`.
+
+Petite précision au passage : c'est bien **MLflow** qui enregistre les paramètres et métriques dans cette base, pas Airflow. Airflow orchestre les tâches (il déclenche ton script d'entraînement), MLflow suit les expériences. Les deux sont indépendants même s'ils sont souvent utilisés ensemble.
+
+### URL vs URI
+
+La distinction est surtout théorique, mais elle est utile à comprendre.
+
+**URI** = identifiant. Il désigne une ressource de façon unique.
+**URL** = localisateur. Il désigne une ressource *et* dit comment y accéder (où elle est, via quel protocole).
+
+Toute URL est une URI. L'inverse n'est pas vrai. URL est donc un sous-ensemble de URI.
+
+Le troisième terme du trio, rarement utilisé en pratique : **URN** (Uniform Resource Name), qui identifie sans localiser. Par exemple `urn:isbn:0-486-27557-4` identifie *Roméo et Juliette* sans dire où trouver un exemplaire. C'est un nom, pas une adresse.
+
+```
+        URI (identifiant)
+       /                 \
+     URL                 URN
+  (où + comment)       (nom seul)
+  https://exemple.fr   urn:isbn:0-486-27557-4
+```
+
+**En pratique**
+
+Quand tu tapes `https://github.com/DataTalksClub/mlops-zoomcamp` dans ton navigateur, c'est à la fois une URI et une URL. Les deux termes sont corrects. Dans la vie de tous les jours on dit « URL » parce que 99 % des identifiants qu'on manipule sont aussi des adresses.
+
+Le W3C a d'ailleurs plus ou moins abandonné la distinction : la spec actuelle (RFC 3986) recommande de dire « URI » pour tout, et considère « URL » comme un terme informel désignant les URIs qui sont dérefençables.
+
+**Pourquoi MLflow dit « URI » et pas « URL »**
+
+Parce que la valeur passée n'est pas toujours une adresse réseau. `sqlite:///mlflow.db` pointe vers un fichier local, `http://127.0.0.1:5000` vers un serveur. « URI » est le terme qui couvre les deux cas sans être faux. C'est le même raisonnement dans SQLAlchemy, JDBC, Docker, etc. — dès qu'un paramètre peut recevoir plusieurs types de backends, la doc parle d'URI.
+
+### HTTP vs HTTPS
+
+Non, l'inverse : `http://...` et `https://...` sont des URLs **et** des URIs. Comme URL est un sous-ensemble de URI, toute URL est automatiquement une URI. Une adresse web est le cas le plus typique de l'URL : elle localise la ressource (`github.com`) et indique le protocole pour y accéder (`https`).
+
+La règle simple : si l'adresse permet d'aller chercher la ressource, c'est une URL. `sqlite:///mlflow.db` aussi, d'ailleurs — c'est bien un localisateur. Le mot « URI » dans MLflow n'est pas là parce que ce ne sont pas des URLs, mais parce que c'est le terme générique qui évite de se poser la question.
+
+**Le message de sécurité, c'est autre chose**
+
+Ça n'a rien à voir avec le vocabulaire URI/URL. Ça concerne le protocole. Deux cas distincts :
+
+| Situation | Ce que dit le navigateur | Cause |
+|---|---|---|
+| `http://` sans le S | « Non sécurisé » dans la barre d'adresse | Le trafic circule en clair, sans chiffrement |
+| `https://` mais avertissement rouge en plein écran | « Votre connexion n'est pas privée », `NET::ERR_CERT_...` | Le certificat pose problème : expiré, auto-signé, ou émis pour un autre domaine |
+
+Le `s` de HTTPS = TLS. Le contenu est chiffré entre ton navigateur et le serveur, et un certificat prouve que le serveur est bien celui qu'il prétend être. Avec du HTTP simple, n'importe qui sur le réseau (ton FAI, le wifi du café) peut lire ou modifier ce qui passe. D'où l'avertissement systématique aujourd'hui.
+
+**Dans ton cas concret**
+
+Quand tu lances `mlflow ui` et que tu ouvres `http://127.0.0.1:5000`, tu verras peut-être « Non sécurisé ». C'est normal et sans risque : le trafic ne quitte jamais la machine, il n'y a personne entre le navigateur et le serveur pour l'intercepter.
+
+Sur Codespaces c'est encore plus simple : quand tu lances MLflow, GitHub détecte le port et crée une URL publique temporaire du genre `https://ton-codespace-5000.app.github.dev`, en HTTPS avec un vrai certificat. Tu passes par le panneau « Ports » de VS Code pour l'ouvrir. Attention par contre au niveau de visibilité du port (`Private` par défaut, ce qui est le bon réglage — évite de le passer en `Public` sans raison).
+
+### What is a port ?
+
+## Le Port Forwarding dans VS Code / Codespaces
+
+### C'est quoi un port ?
+
+Un port c'est comme une **porte numérotée** sur une machine. Quand un programme "écoute" sur un port, il attend des connexions sur cette porte précise. Par exemple, MLflow démarre un serveur web sur le port 5000 — toute requête qui arrive sur ce port lui est transmise.
+
+### Pourquoi le forwarding est nécessaire ?
+
+Dans ton cas, il y a deux machines :
+
+```
+Ton Mac (navigateur) ──── Internet ──── VM Codespace (MLflow tourne ici)
+```
+
+La VM est dans le cloud de GitHub, donc `localhost:5000` sur ton Mac n'existe pas — c'est le localhost **de la VM**. VS Code crée un tunnel chiffré entre les deux, et remappe les ports :
+
+```
+Ton Mac localhost:5000  ──tunnel SSH──►  VM Codespace:5000 (MLflow)
+```
+
+C'est pour ça que ça marche en cliquant sur l'adresse dans VS Code : il sait faire ce pont automatiquement, alors que copier-coller `127.0.0.1:5000` dans ton navigateur pointait vers **ton propre Mac**, où rien n'écoute.
+
+---
+
+### Pourquoi autant de ports ?
+
+Voici ce que tu vois probablement :
+
+| Port | Correspond à |
+|------|-------------|
+| **5000** | **MLflow UI** — le serveur que tu viens de lancer |
+| **9000–9004** | Les **workers Uvicorn** de MLflow. MLflow 3.5+ utilise un serveur FastAPI multi-processus : 1 processus parent + plusieurs workers pour gérer les requêtes en parallèle |
+| **45627** | Port éphémère, probablement la connexion VS Code Desktop ↔ Codespace elle-même (SSH ou protocole interne) |
+
+Les ports 9000–9004 expliquent d'ailleurs ce que tu voyais dans les logs au démarrage :
+
+```
+Started server process [3893]   ← worker 1
+Started server process [3896]   ← worker 2
+Started server process [3895]   ← worker 3
+Started server process [3894]   ← worker 4
+```
+
+En pratique, **tu n'interagis qu'avec le port 5000** — c'est le point d'entrée. Les autres sont de la plomberie interne que MLflow gère tout seul.
+
+### What is a proxy, secure proxy ?
+
+## Le principe
+
+Un **proxy** est un intermédiaire qui se place entre un client et un serveur. Au lieu de se parler directement, les deux passent par lui :
+
+```
+Sans proxy :   Navigateur ──────────────► Serveur
+
+Avec proxy :   Navigateur ──► Proxy ──► Serveur
+```
+
+L'analogie du standard téléphonique d'entreprise marche bien. Tu appelles un numéro unique, une opératrice décroche, et c'est elle qui te met en relation avec la bonne personne. Ton interlocuteur ne voit pas ton numéro, il voit celui du standard. Et l'opératrice peut filtrer les appels, en refuser certains, ou noter qui a appelé.
+
+Ce déplacement du point de vue est essentiel : **le serveur ne voit plus le client, il voit le proxy**. C'est exactement la cause de ton problème initial.
+
+## Deux familles
+
+On distingue les proxys selon le côté où ils se placent.
+
+Un **forward proxy** protège le client. Il est placé devant toi, et le serveur ne sait pas qui tu es. C'est ce que fait un VPN, ou le proxy d'un réseau d'entreprise qui bloque certains sites.
+
+Un **reverse proxy** protège le serveur. Il est placé devant lui, et c'est toi qui ne sais pas quelle machine te répond réellement. C'est le cas qui te concerne.
+
+## Le cas de GitHub Codespaces
+
+Quand tu ouvres un port dans un Codespace via le navigateur, GitHub met un reverse proxy devant ta VM :
+
+```
+Ton navigateur ──► xxx-5000.app.github.dev ──► ta VM:5000
+                   (proxy GitHub)
+```
+
+Le qualificatif **secure** vient de ce que ce proxy ajoute par-dessus le simple relai :
+
+- **Chiffrement HTTPS** — ta VM parle en HTTP tout simple, le proxy présente au navigateur un certificat valide et chiffre le trafic
+- **Authentification** — il vérifie que tu es bien connecté au compte GitHub propriétaire du Codespace avant de laisser passer quoi que ce soit, ce qui explique la mention `Private` dans ta colonne Visibility
+- **Point d'entrée unique** — ta VM n'a aucune adresse publique, elle n'est joignable qu'à travers lui
+
+## Pourquoi MLflow râlait
+
+Chaque requête HTTP transporte un en-tête `Host` qui indique le nom du site demandé. Sans proxy, MLflow reçoit `Host: 127.0.0.1:5000`. À travers le proxy GitHub, il reçoit `Host: xxx-5000.app.github.dev`.
+
+Or le middleware de MLflow n'accepte par défaut que les Host de type localhost. D'où le rejet — et d'où l'utilité de `--allowed-hosts` dans ce scénario.
+
+## Et ton setup actuel ?
+
+VS Code Desktop n'utilise pas ce proxy. Il crée un **tunnel SSH**, ce qui est différent :
+
+```
+localhost:5001 (ton Mac) ══tunnel chiffré══ VM:5000
+```
+
+La nuance : le tunnel ne réécrit pas la requête, il la transporte telle quelle. MLflow reçoit donc bien `Host: 127.0.0.1`, comme si tout se passait en local. C'est précisément pour ça que ta commande courte fonctionne, et que les flags de sécurité sont inutiles chez toi.
