@@ -90,11 +90,16 @@ Les experiment et run MLflow are saved in a .db file in a folder.
 to retrieve the .db file when you relaucnh mlflow after having stop a codespace, you need to open MLFlow in the right folder --> you need to
 
 `conda activate mlopszoomcamp`
+
 `mlflow ui \`
  ` --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db \`
  ` --default-artifact-root /workspaces/mlops-zoomcamp/02-experiment-tracking/mlruns`
 
-pas besoin de ça : `mlflow ui --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db --host 0.0.0.0 --port 5000 --allowed-hosts "*" --cors-allowed-origins "*" `
+ or just `mlflow ui --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db `
+
+pas besoin de ça : 
+
+`mlflow ui --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/02-experiment-tracking/mlflow.db --host 0.0.0.0 --port 5000 --allowed-hosts "*" --cors-allowed-origins "*" `
 
 **Le tracking_uri de ton notebook**
 
