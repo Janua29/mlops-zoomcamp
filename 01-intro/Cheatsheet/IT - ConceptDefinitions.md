@@ -1,4 +1,4 @@
-### URI definition
+# URI definition
 
 Un **URI** (Uniform Resource Identifier) est simplement une chaîne de caractères qui identifie une ressource de façon non ambiguë. Sa forme générale :
 
@@ -33,7 +33,7 @@ Un point de vocabulaire : MLflow utilise plusieurs URIs distinctes. Le *tracking
 
 Petite précision au passage : c'est bien **MLflow** qui enregistre les paramètres et métriques dans cette base, pas Airflow. Airflow orchestre les tâches (il déclenche ton script d'entraînement), MLflow suit les expériences. Les deux sont indépendants même s'ils sont souvent utilisés ensemble.
 
-### URL vs URI
+# URL vs URI
 
 La distinction est surtout théorique, mais elle est utile à comprendre.
 
@@ -85,7 +85,7 @@ Quand tu lances `mlflow ui` et que tu ouvres `http://127.0.0.1:5000`, tu verras 
 
 Sur Codespaces c'est encore plus simple : quand tu lances MLflow, GitHub détecte le port et crée une URL publique temporaire du genre `https://ton-codespace-5000.app.github.dev`, en HTTPS avec un vrai certificat. Tu passes par le panneau « Ports » de VS Code pour l'ouvrir. Attention par contre au niveau de visibilité du port (`Private` par défaut, ce qui est le bon réglage — évite de le passer en `Public` sans raison).
 
-### What is a port ?
+# What is a port ?
 
 ## Le Port Forwarding dans VS Code / Codespaces
 
@@ -186,3 +186,68 @@ localhost:5001 (ton Mac) ══tunnel chiffré══ VM:5000
 ```
 
 La nuance : le tunnel ne réécrit pas la requête, il la transporte telle quelle. MLflow reçoit donc bien `Host: 127.0.0.1`, comme si tout se passait en local. C'est précisément pour ça que ta commande courte fonctionne, et que les flags de sécurité sont inutiles chez toi.
+
+# pip vs conda
+
+`pip` est le gestionnaire de paquets de Python. C'est l'outil qui va chercher une librairie sur internet (sur PyPI, le dépôt officiel) et l'installe dans ton environnement pour que tu puisses l'`import`er dans ton code.
+
+```bash
+pip install pandas      # installe
+pip list                # liste ce qui est installé
+pip uninstall pandas    # désinstalle
+pip install -r requirements.txt   # installe tout ce qu'un projet demande
+```
+
+L'analogie : PyPI est un magasin d'applications pour Python (environ 500 000 librairies), et pip est le bouton "Installer".
+
+Deux choses à savoir dans ton cas :
+
+**pip vs conda** — tu as deux gestionnaires disponibles. `conda install` et `pip install` font le même travail, mais puisent dans des dépôts différents. La convention est de privilégier conda quand le paquet existe, et pip sinon (c'est le cas de beaucoup de librairies MLOps comme `mlflow` ou `prefect`). Le cours zoomcamp utilise surtout pip, donc suis simplement les instructions du cours.
+
+**Il y a un pip par environnement** — c'est le point qui rejoint ta question précédente. Chaque env conda a son propre `pip` et son propre dossier de librairies. Le `pip` de `mlopszoomcamp` installe dans `mlopszoomcamp`, celui de `base` installe dans `base`. D'où l'importance du `which pip` quand quelque chose ne marche pas.
+
+# Kernel et environnement
+
+Un **kernel** est le processus qui exécute réellement ton code quand tu utilises un notebook.
+
+Quand tu ouvres un `.ipynb`, il y a deux choses distinctes :
+- **l'interface** (VS Code ou Jupyter) : elle affiche les cellules, le texte, les graphiques
+- **le kernel** : un processus Python lancé en arrière-plan, qui reçoit le code d'une cellule, l'exécute, et renvoie le résultat
+
+C'est aussi lui qui garde en mémoire tes variables entre les cellules. D'où le comportement que tu connais déjà : redémarrer le kernel = tuer ce processus et en lancer un neuf, donc mémoire vide.
+
+**Plusieurs kernels pour un environnement ?**
+
+Oui, c'est possible. Un kernel est déclaré par un petit fichier `kernel.json` qui dit essentiellement : « pour me lancer, exécute tel interpréteur avec telles options ». Rien n'empêche d'enregistrer deux déclarations pointant vers le même env, sous des noms différents. C'est rare en pratique. Le vrai cas d'usage, c'est plutôt d'avoir des kernels de langages différents (Python + R) installés dans le même env conda.
+
+**Plusieurs environnements pour un kernel ?**
+
+Non. Un kernel pointe vers un unique chemin d'interpréteur (`.../envs/mlopszoomcamp/bin/python`). Il est donc lié à un et un seul environnement — c'est justement ce qui fait tout son intérêt.
+
+En pratique la relation est donc : **1 env conda ↔ 1 kernel**, et c'est le modèle mental à garder.
+
+**Le piège qui te concerne directement**
+
+Le kernel sélectionné dans un notebook est *indépendant* de l'environnement activé dans ton terminal. Tu peux très bien avoir `(mlopszoomcamp)` affiché dans le terminal, et un notebook qui tourne sur le kernel `base` → `ModuleNotFoundError: No module named 'mlflow'` alors que tu viens de l'installer.
+
+Le sélecteur de kernel est en haut à droite du notebook dans VS Code. Vérifie qu'il affiche bien `mlopszoomcamp`.
+
+Et pour qu'un env apparaisse dans cette liste, il faut que le paquet `ipykernel` y soit installé :
+
+```bash
+conda activate mlopszoomcamp
+pip install ipykernel
+```
+
+Deux commandes utiles pour inspecter :
+
+```bash
+jupyter kernelspec list     # liste les kernels déclarés et leurs chemins
+```
+
+Et dans une cellule du notebook, pour savoir sur quoi tu tournes vraiment :
+
+```python
+import sys
+print(sys.executable)
+```
