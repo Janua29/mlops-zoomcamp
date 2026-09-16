@@ -1,0 +1,62 @@
+graph TB
+    subgraph "Docker Compose Environment"
+        subgraph "External Access"
+            UI["Airflow Web UI<br/>:8080"]
+            MLUI["MLflow UI<br/>:5000"]
+        end
+        
+        subgraph "Airflow Core Services"
+            AIRFLOW["• airflow-apiserver<br/>• airflow-scheduler<br/>• airflow-dag-processor<br/>• airflow-triggerer<br/>• airflow-worker<br/>• airflow-init"]
+        end
+        
+        subgraph "Infrastructure Services"
+            PG[("PostgreSQL<br/>Database<br/>airflow:airflow")]
+            REDIS[("Redis<br/>Message Broker<br/>:6379")]
+        end
+        
+        subgraph "MLflow Service"
+            ML["MLflow Server<br/>Port: 5000<br/>SQLite Backend"]
+        end
+        
+
+        
+        subgraph "Shared Volumes"
+            DAGS["dags/<br/>DAG Files"]
+            LOGS["logs/<br/>Log Files"]
+            CONFIG["config/<br/>Configuration"]
+            PLUGINS["plugins/<br/>Custom Plugins"]
+            MLDATA["mlflow_data/<br/>MLflow Database"]
+        end
+        
+        subgraph "Custom Images"
+            AIMG["Airflow Image<br/>apache/airflow:3.0.1<br/>+ requirements.txt"]
+            MIMG["MLflow Image<br/>python + mlflow"]
+        end
+    end
+
+    UI --> AIRFLOW
+    MLUI --> ML
+
+    AIRFLOW --> PG
+    AIRFLOW --> REDIS
+    ML --> MLDATA
+
+    AIRFLOW --> DAGS
+    AIRFLOW --> LOGS
+    AIRFLOW --> CONFIG
+    AIRFLOW --> PLUGINS
+
+    AIMG -.-> AIRFLOW
+    MIMG -.-> ML
+
+    classDef service fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef database fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef volume fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef ui fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef image fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+
+    class AIRFLOW,ML service
+    class PG,REDIS database
+    class DAGS,LOGS,CONFIG,PLUGINS,MLDATA volume
+    class UI,MLUI ui
+    class AIMG,MIMG image
