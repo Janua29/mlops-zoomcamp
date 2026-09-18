@@ -221,3 +221,61 @@ RUN_ID=$(cat run_id.txt)
 C'est le fil conducteur du module 3 : le notebook avait un état implicite en mémoire ; là, chaque exécution produit un artefact identifiable et traçable, et le lien entre les étapes devient explicite.
 
 Le `with open(...) as f` est la forme idiomatique pour ouvrir un fichier : il garantit la fermeture du fichier même si une erreur survient. Le `"w"` signifie *write* — le fichier est écrasé à chaque exécution (`"a"` pour *append* ajouterait à la suite).
+
+
+### Enregistrement du model et du preprocessing de la data dans le python script
+
+Oui pour la première partie : le pickele du script permet d'enregistrer le prerocessing de la data, le dictVectoriser dv. Mais le modèle **est** bien enregistré, simplement pas via pickle. Il est sur cette ligne :
+
+```python
+mlflow.xgboost.log_model(booster, artifact_path="models_mlflow")
+```
+
+## Deux mécanismes différents dans MLflow
+
+`log_artifact` vs `log_model`, c'est toute la distinction.
+
+**`log_artifact(chemin_local, artifact_path=...)`** = « prends ce fichier qui existe déjà sur mon disque et copie-le dans le store d'artefacts du run ». MLflow ne sait pas ce qu'il y a dedans, c'est un octet-stream opaque. D'où la nécessité de le sérialiser toi-même **avant** avec `pickle` — MLflow ne peut copier qu'un fichier, pas un objet Python en mémoire. C'est exactement ce que fait ton bloc : `pickle.dump(dv, f_out)` crée `models/preprocessor.b`, puis `log_artifact` l'envoie.
+
+**`log_model(objet, artifact_path=...)`** = « prends cet objet Python en mémoire, je sais comment le sérialiser ». Le `mlflow.xgboost` devant est ce que MLflow appelle une *flavor* : un module qui connaît la bibliothèque. Il fait la sérialisation à ta place, plus un paquet de choses en plus.
+
+## Ce que la flavor apporte en plus du simple pickle
+
+Dans `models_mlflow/`, tu ne trouveras pas juste un binaire, mais un dossier structuré :
+
+```
+models_mlflow/
+├── MLmodel              ← métadonnées : flavors, signature, version MLflow
+├── model.xgb            ← le booster sérialisé au format natif XGBoost
+├── conda.yaml
+├── python_env.yaml
+└── requirements.txt     ← versions exactes de xgboost, python, etc.
+```
+
+Concrètement, ça te donne :
+- **la reproductibilité de l'environnement** — le `requirements.txt` est capturé automatiquement, donc tu sais qu'il faut `xgboost==2.0.3` pour recharger ce modèle ;
+- **le chargement standardisé** — `mlflow.pyfunc.load_model(f"runs:/{run_id}/models_mlflow")` te rend un objet avec un `.predict()`, quel que soit le framework d'origine. C'est ce qui permet au code de déploiement d'être agnostique ;
+- **le serving clé en main** — `mlflow models serve -m runs:/<run_id>/models_mlflow` lance une API REST sans que tu écrives une ligne ;
+- **le Model Registry** — seul un modèle loggé via `log_model` peut être enregistré, versionné et promu en Staging/Production.
+
+Le `dv` n'a rien de tout ça : c'est juste un fichier binaire. Pour le récupérer au déploiement, tu devras faire à la main :
+
+```python
+path = mlflow.artifacts.download_artifacts(run_id=run_id, artifact_path="preprocessor/preprocessor.b")
+with open(path, "rb") as f_in:
+    dv = pickle.load(f_in)
+```
+
+C'est précisément ce que tu feras au module 4.
+
+## Pourquoi cette dissymétrie ?
+
+Parce que MLflow n'a pas de flavor pour « un `DictVectorizer` tout seul ». Il a une flavor `mlflow.sklearn`, mais elle est pensée pour l'objet qui fait la prédiction, pas pour un transformer isolé. Le cours choisit donc la voie la plus explicite : le modèle bénéficie de sa flavor, le préprocesseur part en artefact brut.
+
+Note que ce découpage en deux morceaux est fragile : si quelqu'un charge le modèle sans le bon `dv`, les colonnes ne correspondront plus et les prédictions seront silencieusement fausses. La parade classique est d'emballer les deux dans un `sklearn.pipeline.Pipeline` et de logger le tout avec `mlflow.sklearn.log_model` — un seul artefact, un seul `.predict()` qui prend les dictionnaires bruts en entrée. Le cours le montre d'ailleurs à un moment. Ici on garde les deux séparés, ce qui est aussi une manière pédagogique de te faire manipuler `run_id` et `download_artifacts`.
+
+## Deux détails en marge
+
+Le `models_folder.mkdir(exist_ok=True)` en haut du script existe uniquement pour que `open("models/preprocessor.b", "wb")` ne plante pas : Python ne crée pas les dossiers manquants tout seul. `exist_ok=True` évite l'erreur si le dossier est déjà là.
+
+Hors de ta question, mais il vaut mieux le savoir : `'objective': 'reg:linear'` est déprécié depuis XGBoost 1.0 et te sort un warning à chaque exécution. Le nom actuel est `'reg:squarederror'` — comportement identique, c'est un pur renommage. Le paramètre vient du notebook d'origine du cours, donc tu peux le laisser sans conséquence, mais le warning n'est pas un bug de ton côté.

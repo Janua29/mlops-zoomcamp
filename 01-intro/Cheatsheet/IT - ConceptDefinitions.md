@@ -251,3 +251,62 @@ Et dans une cellule du notebook, pour savoir sur quoi tu tournes vraiment :
 import sys
 print(sys.executable)
 ```
+
+# Shell, terminak et environnement
+
+Excellente question, et c'est le bon moment pour la poser : tout ce qu'on vient de vivre en découle.
+
+## La définition
+
+Un **shell** est un programme qui lit ce que tu tapes, l'interprète, et lance les programmes correspondants. C'est un interpréteur de commandes. Sur ton Codespace, c'est `bash`.
+
+Attention à ne pas le confondre avec le **terminal**, qui n'est que la fenêtre — le clavier et l'écran. Le terminal affiche, le shell comprend et agit. Même distinction qu'entre un navigateur et le site web qu'il affiche.
+
+Le nom vient de l'image de la « coquille » : la couche par laquelle tu t'adresses au noyau du système, sans jamais lui parler directement.
+
+## Ce qu'un shell transporte avec lui
+
+Un shell n'est pas qu'un lecteur de commandes. C'est un **processus** vivant, qui maintient un état :
+
+- un répertoire courant (ce que `cd` modifie)
+- un ensemble de **variables d'environnement**, dont la plus importante ici : `PATH`
+
+`PATH` est une simple liste de dossiers, séparés par `:`. Quand tu tapes `python`, le shell parcourt cette liste **de gauche à droite** et exécute le **premier** fichier `python` qu'il trouve. Il s'arrête là. Les autres, s'ils existent, sont ignorés.
+
+Regarde la tienne :
+
+```bash
+echo $PATH | tr ':' '\n'
+```
+
+Et voilà la révélation du chapitre : **activer un environnement, ce n'est rien d'autre que mettre son dossier `bin/` en tête de cette liste**. `conda activate`, `pipenv shell`, `source venv/bin/activate` — tous font fondamentalement la même chose. Aucune magie, aucune installation. Juste une réécriture de PATH.
+
+## Shell parent, shell enfant (cf. 04 - deployment)
+
+Un shell peut en lancer un autre. Le nouveau est un processus **enfant**, et il reçoit une **copie** de l'environnement du parent.
+
+Le mot « copie » est le cœur du sujet. Deux conséquences :
+
+- ce que l'enfant modifie ne remonte jamais au parent. C'est pourquoi, en tapant `exit`, tu retrouves ton shell d'avant exactement dans l'état où tu l'avais laissé.
+- l'enfant hérite du PATH du parent, mais peut le réécrire à sa guise.
+
+Ton cas concret, étape par étape :
+
+```
+shell parent          PATH = [conda/mlopszoomcamp/bin, ...]
+│                     prompt : (mlopszoomcamp)
+│
+└─ pipenv shell  →  shell enfant
+                      1. bash démarre et relit ~/.bashrc
+                      2. ~/.bashrc contient le hook conda → conda active base
+                      3. pipenv ajoute le virtualenv en tête
+                      prompt : (web-service) (base)
+```
+
+Les deux préfixes ne sont que l'affichage de ce double passage. Ce qui compte réellement, c'est **qui a écrit en dernier en tête de PATH**. D'où l'arbitrage par `which python`, qui te dit quel fichier sera effectivement exécuté — pas ce que le prompt prétend.
+
+## Pourquoi `pipenv run` évite tout ça
+
+`pipenv run python ...` ne lance pas de shell enfant. Il exécute directement le programme avec le bon PATH, sans relire `~/.bashrc`. Conda n'a donc aucune occasion de s'interposer.
+
+C'est plus sûr, et c'est la forme que tu retrouveras dans les scripts et les Dockerfiles — où il n'y a de toute façon personne pour taper `activate`.
