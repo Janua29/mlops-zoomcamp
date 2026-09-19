@@ -5,11 +5,16 @@ import mlflow
 from flask import Flask, request, jsonify
 
 
-RUN_ID = os.getenv('RUN_ID')
+#RUN_ID = os.getenv('RUN_ID')
 
-logged_model = f's3://mlflow-models-alexey/1/{RUN_ID}/artifacts/model'
-# logged_model = f'runs:/{RUN_ID}/model'
-model = mlflow.pyfunc.load_model(logged_model)
+#logged_model = f's3://mlflow-models-alexey/1/{RUN_ID}/artifacts/model'--> mlflow 2.X
+# logged_model = f'runs:/{RUN_ID}/model' --> mlflow 2.X
+# model = mlflow.pyfunc.load_model(logged_model) --> mlflow 2.X
+
+
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
+MODEL_URI = os.getenv('MODEL_URI', 'models:/m-5e276730f7004842b7c3a36ea11b5044')   # ton vrai URI
+model = mlflow.pyfunc.load_model(MODEL_URI)
 
 
 def prepare_features(ride):
@@ -36,7 +41,7 @@ def predict_endpoint():
 
     result = {
         'duration': pred,
-        'model_version': RUN_ID
+        'model_version': MODEL_URI #RUN_ID
     }
 
     return jsonify(result)
