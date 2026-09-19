@@ -187,6 +187,110 @@ localhost:5001 (ton Mac) ══tunnel chiffré══ VM:5000
 
 La nuance : le tunnel ne réécrit pas la requête, il la transporte telle quelle. MLflow reçoit donc bien `Host: 127.0.0.1`, comme si tout se passait en local. C'est précisément pour ça que ta commande courte fonctionne, et que les flags de sécurité sont inutiles chez toi.
 
+# Adresse 127.0.0.1, ports et machines
+
+Excellent question, et ta confusion est parfaitement légitime — c'est un des points les plus contre-intuitifs du réseau. On reprend depuis zéro.
+
+Deux corrections de vocabulaire d'abord :
+- C'est **`127.0.0.1`**, pas `127.0.0.0`. Le dernier chiffre compte.
+- En français on dit **hébergé** plutôt que "hosté". Et surtout : le serveur est hébergé *sur une machine*, pas *à une adresse*. L'adresse, c'est la façon de le joindre.
+
+---
+
+## Étape 1 — Il y a deux machines, pas une
+
+C'est la base de tout. Dans ton setup il existe **deux ordinateurs physiquement distincts** :
+
+1. **Ton Mac**, posé sur ton bureau
+2. **Le Codespace**, une machine virtuelle qui tourne dans un datacenter Microsoft, quelque part dans le monde
+
+VS Code Desktop te donne l'illusion d'une seule machine, mais c'est une illusion. Ton terminal VS Code, ton Jupyter, ton serveur MLflow : **tout ça tourne sur le Codespace**. Sur ton Mac, il n'y a que deux choses : la fenêtre VS Code et ton navigateur.
+
+## Étape 2 — L'adresse IP désigne une machine
+
+Une adresse IP, c'est comme une adresse postale : elle identifie **une machine** sur un réseau.
+
+`142.250.75.238` → un serveur Google
+`192.168.1.14` → ton Mac sur ton réseau WiFi domestique
+
+## Étape 3 — `127.0.0.1` est une adresse très particulière
+
+Voilà la clé de ta deuxième incompréhension.
+
+`127.0.0.1` (appelée *loopback* ou *localhost*) ne désigne pas une machine précise dans le monde. Elle signifie : **« moi-même, la machine qui pose la question »**.
+
+C'est exactement comme le mot **« chez moi »**. Si tu dis « chez moi », ça désigne Roubaix. Si je le dis, ça désigne autre chose. Le mot est identique, le lieu est différent. Ce n'est pas un nom propre, c'est un **mot relatif au locuteur**.
+
+Donc :
+- Ton Mac dit `127.0.0.1` → il parle de **ton Mac**
+- Le Codespace dit `127.0.0.1` → il parle du **Codespace**
+
+**Toutes** les machines du monde ont un `127.0.0.1`, et chez chacune il pointe vers elle-même. Ce n'est donc pas « deux adresses identiques vers deux serveurs différents » : c'est **un même mot prononcé par deux locuteurs différents**.
+
+## Étape 4 — Le port désigne un programme sur cette machine
+
+Une machine fait tourner plusieurs serveurs en même temps. L'adresse IP amène jusqu'à la machine, mais il faut encore savoir à qui parler.
+
+> **Adresse IP = l'immeuble. Port = le numéro d'appartement.**
+
+Un port est un nombre entre 1 et 65535. Un programme qui veut recevoir des connexions **réserve un port** et « écoute » dessus. Un seul programme à la fois par port — d'où l'erreur si tu relances MLflow sur un port déjà pris.
+
+Petite correction sur ta formulation : tu as écrit « les ports du serveur MLflow » et « les ports de ma machine ». En réalité **les ports appartiennent toujours à une machine**. MLflow ne possède pas le port 5000 ; il *occupe* le port 5000 **du Codespace**. Le port 5000 **de ton Mac** est un port complètement différent, sur une autre machine, occupé par AirPlay.
+
+## Étape 5 — Qui tourne où## Étape 6 — Les deux chemins vers MLflow
+
+![Texte](/workspaces/mlops-zoomcamp/01-intro/images/URL-ports.png)
+
+**Chemin A — le notebook (interne, aucun tunnel)**
+
+Jupyter tourne *sur le Codespace*, juste à côté de MLflow. Quand le notebook dit `127.0.0.1:5000`, il dit : « chez moi, porte 5000 ». Comme « chez moi » = le Codespace, il trouve MLflow immédiatement. Le trafic ne quitte jamais la machine distante.
+
+**Chemin B — ton navigateur (externe, tunnel obligatoire)**
+
+Ton navigateur tourne sur ton Mac. S'il disait `127.0.0.1:5000`, il chercherait « chez moi (le Mac), porte 5000 » → il tomberait sur AirPlay, pas sur MLflow.
+
+Et il ne peut pas non plus joindre le Codespace directement : celui-ci n'a pas d'adresse publique, il est derrière un pare-feu. Il n'existe aucune route.
+
+D'où le **tunnel** : VS Code ouvre une porte sur ton Mac (le port 5001, puisque 5000 était pris par AirPlay) et fait passer tout ce qui y arrive à travers la connexion SSH déjà établie, jusqu'au port 5000 du Codespace.
+
+**Réponse à ta question : le tunnel pointe vers MLflow**, pas vers Jupyter. Le port 5000 distant, c'est MLflow. Jupyter a son propre tunnel, avec son propre numéro — c'est sûrement l'un des 9 ports que tu vois listés.
+
+## Étape 7 — Le récapitulatif
+
+| Qui parle | Ce qu'il écrit | Ce que ça veut dire | Où ça arrive |
+|---|---|---|---|
+| Notebook (Codespace) | `127.0.0.1:5000` | Codespace, porte 5000 | MLflow ✅ |
+| Navigateur (Mac) | `127.0.0.1:5000` | Mac, porte 5000 | AirPlay ❌ |
+| Navigateur (Mac) | `127.0.0.1:5001` | Mac, porte 5001 → tunnel | MLflow ✅ |
+
+**La règle pratique :** demande-toi toujours *sur quelle machine tourne le programme qui écrit l'adresse*. Ton code Python tourne sur le Codespace → il utilise les ports du Codespace. Ton navigateur tourne sur le Mac → il utilise les ports forwardés. Tu ne touches donc pas à ton `set_tracking_uri("http://127.0.0.1:5000")`.
+
+---
+
+Petit bonus qui va faire le lien avec ce que tu as vu en Docker au module 04. Quand tu as lancé MLflow avec `--host 127.0.0.1`, tu lui as dit : « n'accepte que les connexions venant de ta propre machine ». Ça suffit ici, parce que le tunnel SSH *aboutit* sur le Codespace — de son point de vue, la requête vient bien de l'intérieur.
+
+Si tu avais mis `--host 0.0.0.0`, tu aurais dit : « accepte les connexions arrivant par n'importe quelle interface réseau ». C'est exactement pour ça que tu as dû le faire dans ton conteneur Docker : le processus à l'intérieur du conteneur devait accepter des requêtes venant de *l'extérieur* du conteneur. Même concept, deux frontières différentes.
+
+Dis-moi si un point reste flou — sinon, lance le notebook et on attaque le `log_model`.
+
+Mon récapitulatif : Donc dans mon navigateur, qui tourne sur mon mac, l'adresse uri (dans la barre d'adresse du navigateur) est 127.0.0.1:5001, mais grâce au tunnel SSH créé de VS code, il accède a 127.0.0.1:5000 c'est a dire le port qu'écouter et occupe MLFlow sur la machine "codespace". C'est bien ça ?
+
+Réponse claude : 
+
+Exactement, c'est ça. Tu as le mécanisme.
+
+Deux précisions de détail pour affiner :
+
+**Sur le vocabulaire.** Dans la barre d'adresse, on parle plutôt d'**URL**. Et elle est complète : `http://127.0.0.1:5001`. Le `http://` n'est pas décoratif — c'est le **protocole**, la langue que les deux programmes vont parler. L'adresse dit *quelle machine*, le port dit *quel programme*, le protocole dit *comment lui parler*.
+
+**Sur ce que "voit" MLflow.** Le tunnel ne fait pas que transporter la requête, il la fait **ressortir depuis l'intérieur** du Codespace. MLflow reçoit donc une connexion qui, de son point de vue, provient de `127.0.0.1` — de sa propre machine. C'est précisément pour ça que `--host 127.0.0.1` suffit : MLflow n'a jamais conscience qu'une requête a traversé l'Atlantique.
+
+Une image qui marche bien : le tunnel est un **standard téléphonique**. Ton navigateur appelle le numéro local 5001. Le standardiste (VS Code) décroche, transfère l'appel jusqu'au Codespace, et le fait sonner sur le poste interne 5000. MLflow décroche et voit un appel interne — il ignore complètement l'existence de l'appelant d'origine.
+
+Le reste est juste. Tu peux lancer le notebook.
+
+
+
 # pip vs conda
 
 `pip` est le gestionnaire de paquets de Python. C'est l'outil qui va chercher une librairie sur internet (sur PyPI, le dépôt officiel) et l'installe dans ton environnement pour que tu puisses l'`import`er dans ton code.

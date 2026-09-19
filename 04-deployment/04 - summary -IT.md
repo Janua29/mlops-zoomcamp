@@ -1,4 +1,4 @@
-# Récapitulatif du module 4 : déployer un modèle comme service web
+# Module 4 — Partie 1 : web-service - déployer un modèle en web service
 
 ---
 
@@ -315,3 +315,73 @@ Et un piège plus vicieux que tu as frôlé : lancer `gunicorn` depuis `(mlopszo
 ---
 
 Si tu veux, je peux transformer ce récapitulatif en document que tu gardes et annotes au fil du cours.
+
+
+# qu'es-ce que ./bashrc ?
+
+`~/.bashrc` est un **fichier de configuration** — un simple script bash que le shell exécute automatiquement à son démarrage.
+
+Décomposons le nom :
+- `~` = ton répertoire personnel, ici `/home/codespace`
+- le `.` initial = fichier caché (invisible avec `ls`, il faut `ls -a`)
+- `rc` = *run commands*, une convention Unix ancienne qu'on retrouve partout (`.vimrc`, `.condarc`, `.npmrc`)
+
+Le chemin complet chez toi : `/home/codespace/.bashrc`.
+
+## Ce qu'il contient
+
+Tout ce que tu veux voir appliqué à chaque nouveau shell : des alias, des modifications de `PATH`, la personnalisation du prompt, des variables d'environnement. Comme c'est un script bash ordinaire, il peut contenir n'importe quelle commande.
+
+Regarde le tien :
+
+```bash
+cat ~/.bashrc
+```
+
+Tu y trouveras un bloc de ce genre, ajouté par conda lors de son installation :
+
+```bash
+# >>> conda initialize >>>
+__conda_setup="$('/home/codespace/miniconda3/bin/conda' 'shell.bash' 'hook' ...)"
+...
+# <<< conda initialize <
+```
+
+C'est ce bloc — le « hook conda » — qui rend la commande `conda` disponible et qui active `base` automatiquement.
+
+## Pourquoi c'est la clé de ton `(web-service) (base)`
+
+Voilà la chaîne complète :
+
+1. tu tapes `pipenv shell`
+2. un **shell enfant** démarre
+3. étant un nouveau bash, il lit `~/.bashrc` **depuis le début**
+4. le hook conda s'exécute → `base` est activée, son `bin/` passe en tête du `PATH`
+5. pipenv ajoute ensuite son virtualenv en tête
+
+Chaque nouveau shell relit ce fichier. Il n'hérite pas de l'état « conda déjà initialisé » du parent : il refait la manœuvre depuis zéro. D'où le préfixe qui réapparaît alors que tu croyais en être sorti.
+
+C'est exactement pour contourner ça que `pipenv run` est préférable : il n'ouvre pas de shell, donc `~/.bashrc` n'est jamais relu, donc conda n'a aucune occasion de s'interposer.
+
+## Une nuance utile
+
+Bash distingue deux types de session et deux fichiers :
+
+- **shell interactif** (un terminal ouvert) → lit `~/.bashrc`
+- **shell de connexion** (SSH, console) → lit `~/.bash_profile` ou `~/.profile`
+
+Dans la pratique, `~/.bash_profile` contient souvent une ligne qui source `~/.bashrc`, pour que les deux cas se comportent pareil. Sur ton Codespace, tu peux t'en tenir à `~/.bashrc`.
+
+## À savoir pour la suite
+
+Si tu modifies `~/.bashrc`, le changement ne s'applique pas aux shells déjà ouverts. Il faut soit ouvrir un nouveau terminal, soit forcer la relecture :
+
+```bash
+source ~/.bashrc
+```
+
+Et une mise en garde : c'est un fichier qu'on casse facilement. Une erreur de syntaxe peut rendre tes terminaux inutilisables. Fais-en une copie avant toute modification :
+
+```bash
+cp ~/.bashrc ~/.bashrc.backup
+```

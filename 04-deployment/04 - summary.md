@@ -1,4 +1,4 @@
-# Module 4 — Partie 1 : déployer un modèle en web service
+# Module 4 — Partie 1 : web-service - déployer un modèle en web service
 
 ## 1. D'où on part, et le problème à résoudre
 
