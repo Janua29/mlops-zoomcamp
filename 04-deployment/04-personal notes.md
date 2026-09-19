@@ -1,3 +1,17 @@
+
+# web-service-mlflow : MLflow server
+
+cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow
+conda activate mlopszoomcamp
+
+mlflow server \
+  --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/mlflow.db \
+  --default-artifact-root /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts \
+  --host 127.0.0.1 \
+  --port 5000
+
+# web service : pipenv (related to the folder )
+
 first thing we need to do : be sure that to create the web sevice, we'll use the same scikit learn version that the one used to create the pickle file in the duration-prediction.py we used before
 
 To do that, go to the termina 
