@@ -385,3 +385,57 @@ Et une mise en garde : c'est un fichier qu'on casse facilement. Une erreur de sy
 ```bash
 cp ~/.bashrc ~/.bashrc.backup
 ```
+
+# Flask, gunicorn and docker : comment activer le web service et le tester
+
+**Question**
+
+Question sur les en service flask, gunicorn, avec et sans docker.
+- quand on a pas encore créer de container : en écrivant "python predict.py" on lance le web-service de flask. En écrivanr "python test.py" on test le web-service que fait tourner le webserver de flask. En écrivant gunicorn --bind=0.0.0.0:9696 predict:app --> on lance le web-service sur le server gunicorn. Comment tester le service (équivalent a python test.py)?
+- une fois qu'on a build l'image docker et run un container, quels sont les commandes pour lancer plus tester le web-service ?
+
+**Answer**
+
+Ton résumé est correct. Et la réponse à ta question tient en une phrase qui est le point central de tout le module :
+
+**`test.py` ne change jamais.** C'est toujours `python test.py`, dans les trois cas.
+
+## Pourquoi
+
+`test.py` fait une seule chose : envoyer une requête HTTP à `http://localhost:9696/predict`. Il ne sait pas — et n'a aucun moyen de savoir — ce qui se trouve derrière ce port. Un serveur de dev Flask, un Gunicorn, un conteneur Docker : pour lui c'est identique.
+
+C'est précisément ça, une **interface**. Le client parle à une adresse et un port. L'implémentation derrière peut changer complètement sans qu'il s'en aperçoive.
+
+Une image : tu appelles un numéro de téléphone. Peu importe que ton interlocuteur soit dans son salon, dans un open space ou dans un centre d'appels — tu composes le même numéro.
+
+## Le tableau complet
+
+Dans tous les cas, **deux terminaux** : le premier est bloqué par le serveur, le second lance le client.
+
+| Étape | Terminal 1 (serveur) | Terminal 2 (client) |
+|---|---|---|
+| Flask dev | `pipenv run python predict.py` | `pipenv run python test.py` |
+| Gunicorn | `pipenv run gunicorn --bind=0.0.0.0:9696 predict:app` | `pipenv run python test.py` |
+| Docker | `docker run -it --rm -p 9696:9696 ride-duration-prediction-service:v1` | `pipenv run python test.py` |
+
+Une seule colonne bouge. C'est la colonne de gauche qui progresse vers la production ; la colonne de droite reste ton point de repère fixe.
+
+## Deux précisions
+
+**Le `pipenv run` devant `test.py`** : nécessaire parce que `requests` est installé dans le virtualenv, pas dans conda. Même en mode Docker, le *client* tourne toujours dans ton environnement pipenv — c'est le *serveur* qui est parti dans le conteneur.
+
+**Le `-p 9696:9696`** est ce qui rend le cas Docker possible. Un conteneur a sa propre pile réseau, isolée. Sans cette publication de port, Gunicorn écouterait sur le `9696` *du conteneur*, invisible depuis ta machine, et `test.py` recevrait un `Connection refused`.
+
+La syntaxe se lit `hôte:conteneur`. Tu peux d'ailleurs les décorréler : `-p 8080:9696` exposerait le service sur `localhost:8080` chez toi. Il faudrait alors modifier l'URL dans `test.py` — c'est le seul cas où le client doit être touché.
+
+## Le test de compréhension
+
+Si tu veux vérifier que tu as bien saisi l'idée d'interface, fais ceci : lance le conteneur, puis dans le second terminal, au lieu de `test.py`, envoie la requête à la main.
+
+```bash
+curl -X POST http://localhost:9696/predict \
+  -H "Content-Type: application/json" \
+  -d '{"PULocationID": "10", "DOLocationID": "50", "trip_distance": 40}'
+```
+
+`curl` ne connaît ni Python, ni Flask, ni ton modèle. Il parle HTTP, et ça suffit. Si tu obtiens une durée prédite, tu as la démonstration que ton service est devenu un composant réseau interchangeable — ce qui est exactement le but du chapitre.
