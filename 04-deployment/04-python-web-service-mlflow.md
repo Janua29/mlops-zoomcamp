@@ -2,7 +2,7 @@
 
 > **Dossier concerné** : `04-deployment/web-service-mlflow/`
 > **Fichier commenté** : `random-forest.ipynb`
-> **Comparaison** : `01-intro/duration-prediction.ipynb` — le notebook qui a produit le `lin_reg.bin` utilisé dans `04-deployment/web-service/`
+> **Comparaison** : `01-intro/duration-prediction.ipynb` — la méthode « d'avant », celle dont `04-deployment/web-service/` déploie le résultat
 > **Portée** : uniquement le code Python et le machine learning. Tout ce qui concerne Flask, gunicorn, pipenv et Docker est dans `04-IT-web-service-mlflow.md`.
 
 ---
@@ -52,7 +52,16 @@ Deux idées, donc, et c'est l'ordre logique :
 
 ## 2. Le point de départ : `duration-prediction.ipynb` (module 1)
 
-C'est le notebook qui a produit `lin_reg.bin`, le fichier utilisé dans `04-deployment/web-service/`. Il faut l'avoir en tête, parce que **tout ce que `random-forest.ipynb` fait différemment, il le fait en réaction à lui.**
+C'est le notebook qui montre la méthode « d'avant » : deux objets entraînés séparément, puis picklés ensemble. Il faut l'avoir en tête, parce que **tout ce que `random-forest.ipynb` fait différemment, il le fait en réaction à lui.**
+
+> ⚠️ **Précision qui compte** : le `lin_reg.bin` réellement présent dans `04-deployment/web-service/` n'est **pas** celui que ton notebook produirait. Il vient du cours. Vérifie-le toi-même, sans rien désérialiser :
+>
+> ```bash
+> strings 04-deployment/web-service/lin_reg.bin | grep -A2 _sklearn_version
+> # → 1.0.2
+> ```
+>
+> Or ton notebook importe `root_mean_squared_error`, qui n'existe qu'à partir de scikit-learn 1.4 (et l'argument `squared=False` qu'elle remplace a disparu en 1.6). Les deux ne peuvent pas être le même fichier. C'est **toute** l'explication de la cascade du chapitre précédent : pipenv → Python 3.10 → `numpy<2`, pour faire tourner un pickle de 2022 dans un environnement de 2026.
 
 ### Les cellules qui comptent
 
@@ -141,6 +150,10 @@ Deux remarques sur cette carte.
 
 **Les cellules 9, 11 et 12 sont commentées, pas supprimées.** C'est un bon réflexe pour apprendre : le code mort raconte l'ancienne méthode. Mais c'est un mauvais réflexe pour un fichier qu'on garde : dans six mois, tu ne sauras plus si ces lignes sont « à réactiver » ou « à oublier ». Si tu veux garder la trace, mets-la dans une cellule markdown qui dit explicitement *pourquoi* c'est mort.
 
+**Les sorties périmées sont pires que le code mort.** Ta cellule 11, entièrement commentée, affiche encore un `NameError: name 'path' is not defined` ; ta cellule 12 (`#dv`) affiche encore `DictVectorizer()`. Ce sont des résidus d'anciennes exécutions, conservés dans le fichier `.ipynb`. Un lecteur — toi dans six mois — voit une erreur sous une cellule vide et doute de tout le notebook.
+
+Le réflexe avant de committer : **`Restart Kernel and Clear All Outputs`**, puis réexécuter de haut en bas. Un notebook dont les sorties ne correspondent pas à son code ne prouve rien.
+
 **Le notebook s'arrête à l'entraînement.** Il ne sert pas le modèle. Il produit un identifiant (`models:/m-...`) que tu transmets ensuite au service. C'est la frontière entre ce document et le second.
 
 ---
@@ -209,6 +222,10 @@ Le `+` fonctionne parce que les deux colonnes sont maintenant des chaînes — c
 ```
 
 C'est précisément le format qu'attend le `DictVectorizer`. Et c'est aussi, ce n'est pas un hasard, le format naturel du JSON qu'un client enverra au service. Cette correspondance est ce qui rendra `predict.py` si court.
+
+> **Effet de bord à connaître** : la ligne `df['PU_DO'] = …` **modifie le DataFrame reçu en argument**. Après `prepare_dictionaries(df_train)`, `df_train` possède une colonne `PU_DO` que tu n'as jamais créée toi-même.
+>
+> En Python, un DataFrame passé à une fonction n'est pas copié : la fonction reçoit une référence vers le même objet. Ce qu'elle modifie, l'appelant le voit. C'est ce qu'on appelle un *effet de bord*, et c'est une source classique de surprise — surtout quand on réexécute des cellules dans le désordre.
 
 ### Cellule 4 — le chargement
 
@@ -334,9 +351,32 @@ X_train = dv.fit_transform(train_dicts)   # ← fit_transform
 X_val   = dv.transform(val_dicts)         # ← transform
 ```
 
-Sauf qu'à la main, **rien ne t'empêche de te tromper**. Écris `dv.fit_transform(val_dicts)` par inadvertance, et le vectorizer réapprend son vocabulaire sur les données de validation. Ton score de validation devient faussement bon, parce que le préprocessing a « vu » les données de test. C'est ce qu'on appelle une **fuite de données** (*data leakage*).
+Sauf qu'à la main, **rien ne t'empêche de te tromper**. Écris `dv.fit_transform(val_dicts)` par inadvertance, et le vectorizer réapprend un vocabulaire **différent** sur février (d'autres paires `PU_DO`, dans un autre ordre). La matrice n'a plus 13 221 colonnes, et `lr.predict(X_val)` plante : `ValueError: X has N features, but LinearRegression is expecting 13221 features`. Avec un one-hot comme `DictVectorizer`, l'erreur est donc **bruyante** — c'est déjà ça. Mais retiens le principe, parce qu'il devient silencieux dès que le transformateur a un **état statistique** : un `StandardScaler` (moyenne, écart-type), un `SimpleImputer(strategy='mean')`, un `TfidfVectorizer` (idf), un *target encoding*. Là, un `fit_transform` sur la validation ne casse rien : il ajuste le préprocessing sur les données de test, le score devient faussement bon, et rien ne le signale. C'est ce qu'on appelle une **fuite de données** (*data leakage*).
 
-Le `Pipeline` rend cette erreur **structurellement impossible**. Ce n'est pas qu'il te prévient : c'est que le chemin pour la commettre n'existe plus.
+Le `Pipeline` supprime ce chemin-là : tu ne peux plus appeler `fit_transform` sur la validation, puisque tu n'appelles plus le transformateur du tout. Aujourd'hui il te protège du crash et de la duplication ; le jour où tu ajoutes un scaler, il te protège de la fuite.
+
+### Et le cas où le Pipeline n'est plus un confort mais une obligation
+
+L'argument ci-dessus peut sembler faible — « il suffit de faire attention ». Voici celui qui ne se discute pas : la **validation croisée**.
+
+```python
+# SANS pipeline — la fuite est silencieuse et sans aucune faute de frappe
+X_train = scaler.fit_transform(X)               # moyenne/écart-type appris sur TOUT
+cross_val_score(model, X_train, y, cv=5)        # chaque fold a déjà « vu » les autres
+```
+
+Ici, personne ne s'est trompé. Le transformateur a simplement été entraîné **avant** le découpage, donc ses statistiques contiennent celles des cinq blocs. Chaque fold de validation évalue un modèle dont le préprocessing connaissait déjà ses données. Le score remonte, et rien ne le signale.
+
+> Avec ton `DictVectorizer`, le même montage (`dv.fit_transform(dict_train)` avant `cross_val_score`) fuit aussi en principe : le vocabulaire contient des paires `PU_DO` que le fold d'entraînement ne voit qu'à zéro. Mais l'effet sur le score est quasi nul — un modèle n'apprend rien d'une colonne toujours à zéro. C'est pour ça que l'exemple ci-dessus prend un scaler : c'est là que la fuite se **voit**.
+
+```python
+# AVEC pipeline — correct par construction
+cross_val_score(pipeline, dict_train, y_train, cv=5)
+```
+
+Scikit-learn refait le `fit` du pipeline **entier** dans chaque fold : chaque transformateur réapprend son état sur les quatre blocs d'entraînement seulement.
+
+Dès que tu feras de la validation croisée ou de la recherche d'hyperparamètres — c'est-à-dire très vite — le Pipeline cesse d'être une bonne pratique pour devenir la **seule façon correcte** d'écrire le code.
 
 > C'est une idée qui dépasse largement ce chapitre. En ingénierie, la bonne réponse à « on peut se tromper ici » n'est jamais « il faut faire attention » — c'est « rendons l'erreur impossible ».
 
@@ -359,7 +399,7 @@ La vectorisation est *dedans*. Il n'y a plus de logique de transformation dupliq
 
 ### Une limite à connaître : les catégories inconnues
 
-Le `DictVectorizer` a un comportement qu'il faut avoir en tête pour la production. À l'entraînement, il a vu un certain nombre de valeurs de `PU_DO` — mettons 8 000 trajets distincts. Si une requête arrive avec `PU_DO = "17_203"` qu'il n'a jamais vu, il ne lève **aucune erreur** : il ignore simplement la clé inconnue, et la ligne correspondante est vectorisée avec des zéros partout sur la partie catégorielle.
+Le `DictVectorizer` a un comportement qu'il faut avoir en tête pour la production. À l'entraînement, il a vu un nombre fini de valeurs de `PU_DO` — chez toi, 13 220 paires distinctes (voir la vérification plus bas). Si une requête arrive avec `PU_DO = "17_203"` qu'il n'a jamais vu, il ne lève **aucune erreur** : il ignore simplement la clé inconnue, et la ligne correspondante est vectorisée avec des zéros partout sur la partie catégorielle.
 
 Le modèle prédit quand même. Il prédit mal, mais il prédit, et rien ne te le signale.
 
@@ -368,7 +408,12 @@ Vérifie combien de colonnes ton vectorizer a apprises (c'est ce que fait ta cel
 ```python
 dv = pipeline.named_steps['dictvectorizer']
 print(len(dv.feature_names_))
+# → 13221
 ```
+
+> **Le tiret bas final n'est pas décoratif.** En scikit-learn, un attribut qui se termine par `_` (`feature_names_`, `coef_`, `n_features_in_`) est un attribut **appris** : il n'existe qu'*après* le `fit`. Avant, y accéder lève une `AttributeError`. C'est une convention systématique de la bibliothèque — elle te dit d'un coup d'œil ce qui vient de toi et ce qui vient des données.
+
+13 221 colonnes : une pour `trip_distance`, et 13 220 pour les paires `PU_DO` distinctes vues en janvier 2021. Tout trajet dont la paire n'est pas dans cette liste sera vectorisé à zéro sur toute la partie catégorielle.
 
 C'est le genre de chose qu'on surveille en production — ce sera le sujet du module 5 (monitoring).
 
@@ -460,6 +505,8 @@ with open('lin_reg.bin', 'wb') as f_out:
 
 **L'indentation définit la portée.** Tout ce qui est indenté sous le `with` est rattaché à ce run. Une ligne désindentée par erreur, et ta métrique atterrit en dehors — ou nulle part.
 
+> **Le nom bizarre dans la sortie.** Ta cellule affiche `🏃 View run smiling-mouse-209 at: …/runs/0ee6291e…`. MLflow tire un nom aléatoire quand tu ne lui en donnes pas. Ce nom est joli mais n'identifie rien de stable ; c'est le `run_id` de l'URL qui compte. Pour nommer toi-même : `mlflow.start_run(run_name="rf-baseline")`.
+
 ### `mlflow.log_params(params)`
 
 Enregistre les hyperparamètres. Pluriel : prend un dictionnaire et logge toutes les paires d'un coup. Le singulier existe aussi : `mlflow.log_param('max_depth', 20)`.
@@ -509,6 +556,14 @@ C'est la différence de fond entre les deux :
 
 C'est la ligne qui fait basculer le notebook dans le déploiement. Elle mérite sa propre section — voir §7 et §8.
 
+Retiens dès maintenant ce qu'est `model_info` : un objet **`ModelInfo`** renvoyé par `log_model`. Trois attributs te serviront :
+
+| Attribut | Contenu | Usage |
+|---|---|---|
+| `.model_uri` | `models:/m-5e276730…` | **c'est celui que tu exportes** dans `MODEL_URI` |
+| `.model_id` | `m-5e276730…` (sans le préfixe) | pour construire d'autres URI |
+| `.run_id` | `0ee6291ee44b…` | pour retrouver le run qui l'a produit |
+
 ### `RUN_ID = run.info.run_id` (hors du bloc)
 
 L'objet `run` reste accessible après la fermeture du `with`. Ce n'est pas la variable Python qui disparaît — c'est seulement le run **côté serveur** qui passe au statut `FINISHED`.
@@ -519,14 +574,19 @@ C'est une nuance qui déroute au début : le `with` gère un *effet de bord* (l'
 
 ## 7. Les quatre familles de `log_*` : `log_params`, `log_metric`, `log_artifact`, `log_model`
 
-MLflow propose quatre façons d'enregistrer quelque chose dans un run. Elles sont souvent confondues. Voici la carte.
+MLflow propose quatre façons **principales** d'enregistrer quelque chose dans un run. Elles sont souvent confondues. Voici la carte.
 
 | Fonction | Ce qu'elle enregistre | Format | Exemple |
 |---|---|---|---|
 | `log_param(s)` | une décision de configuration | clé → texte | `max_depth = 20` |
-| `log_metric` | un résultat mesuré | clé → nombre (+ `step`) | `rmse = 6.7` |
+| `log_metric` | un résultat mesuré | clé → nombre (+ `step`) | `rmse = 6.7558` |
 | `log_artifact` | **un fichier quelconque** | fichier brut | un `.png`, un `.csv`, un `.bin` |
 | `log_model` | **un modèle**, au format standard MLflow | dossier structuré | le pipeline sérialisé |
+| `set_tag(s)` | une étiquette libre, **modifiable après coup** | clé → texte | `stage = "baseline"` |
+
+> Il en existe d'autres, plus spécialisées : `log_dict`, `log_figure`, `log_text`, `log_input`. Elles ne sont que des raccourcis autour de `log_artifact`.
+>
+> La différence `log_param` / `set_tag` déroute souvent : un **paramètre** est immuable et décrit l'entraînement ; un **tag** est modifiable et décrit ton organisation à toi (« validé », « à rejouer », « auteur »). Si l'UI MLflow te montre une colonne *Tags* vide, c'est simplement que tu n'en as jamais posé.
 
 ### `mlflow.log_artifact` — ce que c'est
 
@@ -548,7 +608,9 @@ MLflow ne regarde **pas** ce qu'il y a dedans. C'est un dépôt de fichiers, poi
 
 ### Ce que le cours en faisait, et pourquoi tu ne l'utilises pas
 
-Dans la version originale du cours, le `DictVectorizer` était entraîné **séparément** du modèle, puis picklé à la main et attaché au run :
+> ⚠️ Ne te trompe pas d'adversaire : le notebook amont du cours utilise **déjà** `make_pipeline` et logge déjà le pipeline entier — son `README.md` l'annonce (« *Put the model into a scikit-learn pipeline* »). Le vrai « avant », c'est le module 1. Ce qui suit décrit une version **antérieure** du cours, dont la cellule `download_artifacts('dict_vectorizer.bin')` est le vestige resté dans le notebook amont.
+
+Dans cette version antérieure, le `DictVectorizer` était entraîné **séparément** du modèle, puis picklé à la main et attaché au run :
 
 ```python
 # Version historique du cours — reconstituée
@@ -572,15 +634,17 @@ C'est exactement la cellule 9 de ton notebook, celle que tu as commentée. Elle 
 **Pourquoi c'est devenu inutile chez toi** : ton `DictVectorizer` n'est plus un objet séparé. Il est *dans* le pipeline, et le pipeline part entier dans `log_model`. Il n'y a plus de pièce jointe à attacher, plus de pièce jointe à télécharger, plus de risque de désynchronisation entre les deux.
 
 ```
-Version cours (MLflow 2 + objets séparés)
+Objets séparés (module 1, et versions anciennes du cours)
     log_model(model)        →  models/…            ┐  deux choses à
     log_artifact(dv.bin)    →  dict_vectorizer.bin ┘  charger et à synchroniser
 
-Ta version (Pipeline)
+Avec Pipeline (ton notebook, et le notebook amont actuel)
     log_model(pipeline)     →  models/…               une seule chose
 ```
 
 C'est le même gain que celui du §5, vu depuis MLflow au lieu de scikit-learn : **le `Pipeline` supprime le besoin de `log_artifact`**.
+
+> Vestige à nettoyer : le fichier `dict_vectorizer.bin` (4,8 ko) traîne encore dans ton dossier `web-service-mlflow/`. Il ne sert plus à rien, et il n'est pas dans le `.dockerignore`. Dans six mois, tu le verras et tu te demanderas s'il est utile.
 
 ### Quand `log_artifact` te resservira
 
@@ -599,25 +663,42 @@ Ce sont des pièces justificatives. Elles ne servent pas à prédire, elles serv
 model_info = mlflow.sklearn.log_model(pipeline, name="model")
 ```
 
-Ce n'est pas un `log_artifact` sur un pickle. C'est plus riche. MLflow sérialise le pipeline **et** écrit autour de lui un dossier standardisé :
-
-```
-model/
-├── MLmodel                 ← le manifeste : flavors, signature, version MLflow
-├── model.pkl               ← le pipeline sérialisé
-├── conda.yaml              ← l'environnement conda pour le recharger
-├── python_env.yaml         ← idem, version venv
-└── requirements.txt        ← les versions exactes des dépendances
-```
-
-C'est la cellule 10 de ton notebook qui te montre ce contenu :
+Ce n'est pas un `log_artifact` sur un pickle. C'est plus riche. MLflow sérialise le pipeline **et** écrit autour de lui un dossier standardisé. C'est la cellule 10 de ton notebook qui te le montre :
 
 ```python
 for a in mlflow.artifacts.list_artifacts(artifact_uri=model_info.model_uri):
     print(a.path)
 ```
 
-Deux choses à retenir de cette structure.
+```
+MLmodel                 ← le manifeste : flavors, signature, version MLflow
+conda.yaml              ← l'environnement conda pour le recharger
+model.skops             ← le pipeline sérialisé
+python_env.yaml         ← idem, version venv
+requirements.txt        ← les versions exactes des dépendances
+```
+
+Trois choses à retenir de cette structure.
+
+**`model.skops` et non `model.pkl` — c'est important.** Tu t'attendais peut-être à un pickle. MLflow 3 sérialise par défaut les modèles scikit-learn au format **skops**, une alternative au pickle conçue pour la sécurité.
+
+Le problème du pickle : il ne stocke pas des données, il stocke des **instructions d'exécution**. Dépickler un fichier, c'est exécuter du code que quelqu'un d'autre a écrit. Un `.pkl` téléchargé depuis une source non fiable peut lancer n'importe quoi sur ta machine, sans que tu ne le voies passer.
+
+Skops répond à ça : il ne sérialise que des types connus et vérifiables, et refuse d'en charger d'autres sans autorisation explicite. C'est le format qu'on veut quand un modèle traverse des frontières — entre équipes, entre machines, depuis un registre.
+
+**Conséquence pour la suite** : ton conteneur devra être capable de **lire** ce format. C'est pourquoi ton `Pipfile` contient :
+
+```toml
+skops = "==0.14.0"
+```
+
+Attention à ne pas se tromper de raison. `skops` est une dépendance **cœur** de MLflow (`skops<1` est listé dans son `pyproject.toml`) : `pipenv install mlflow==3.16.0` l'installera de toute façon. Vérifie-le plutôt que de le croire : `python -m pip show mlflow | grep -i requires` dans `mlopszoomcamp`, ou `pipenv graph | grep -B1 skops` dans le dossier — le second te montre *qui* tire skops. Tu ne l'ajoutes donc **pas** pour garantir sa présence — il serait là sans toi.
+
+Tu l'épingles pour la même raison que scikit-learn : **figer la version qui a écrit le fichier**. Si l'image installait une autre version de skops que celle ayant produit ton `model.skops`, tu retomberais sur un problème de désérialisation. La règle du chapitre reste donc : *tout ce qui touche à la sérialisation est épinglé.*
+
+> C'est une bonne illustration de ce que le `requirements.txt` écrit par MLflow t'apporte : il liste les dépendances **de ce modèle-là**, telles qu'elles sont nécessaires pour le recharger. Prends l'habitude de le lire avant de construire un `Pipfile`.
+
+Les deux autres points.
 
 **Le fichier `MLmodel` déclare des *flavors*.** Une *flavor* est une façon de charger le modèle. Ton pipeline en a deux :
 
@@ -669,8 +750,8 @@ L'intuition derrière ce choix : **un modèle a un cycle de vie plus long que l'
 | | MLflow 2 | MLflow 3 |
 |---|---|---|
 | Logger un modèle | `log_model(m, artifact_path="model")` | `log_model(m, name="model")` |
-| Identifiant du modèle | `runs:/<run_id>/model` | `models:/m-<hash>` |
-| Récupérer l'URI | construite à la main en f-string | `model_info.model_uri` |
+| Identifiant du modèle | `runs:/<run_id>/model` | `models:/m-<identifiant>` |
+| Valeur de `model_info.model_uri` | `runs:/<run_id>/model` | `models:/m-<id>` |
 | `client.list_artifacts(RUN_ID)` | montre `model/` | **ne le montre plus** — il n'est plus là |
 | Télécharger un artifact | `client.download_artifacts(...)` | **retirée** → `mlflow.artifacts.download_artifacts(...)` |
 | Lister les fichiers d'un modèle | — | `mlflow.artifacts.list_artifacts(artifact_uri=...)` |
@@ -691,7 +772,9 @@ C'est la confusion à dissiper, et c'est la réponse à la question que tu notai
 
 C'est aussi pourquoi ton `predict.py` renvoie `model_version: MODEL_URI` dans sa réponse : en cas d'incident, tu peux relier chaque prédiction au modèle exact qui l'a produite.
 
-### `models:/m-<hash>` vs modèle enregistré : une nuance
+### `models:/m-…` vs modèle enregistré : une nuance
+
+> Le `m-5e276730f7004842b7c3a36ea11b5044` n'est **pas** une empreinte du contenu, malgré son allure : c'est un identifiant tiré au hasard à la création. Relogger exactement le même pipeline produit un identifiant différent. Ne compte donc jamais dessus pour savoir si deux modèles sont identiques.
 
 Tu croiseras une **troisième** forme d'URI dans la documentation :
 
@@ -801,6 +884,15 @@ Excellente cellule pédagogique — elle démontre concrètement le point du §5
 - `named_steps` te rend le dictionnaire des étapes.
 - `feature_names_` est la liste des colonnes apprises par le vectorizer. Sa longueur te dit combien de features le modèle manipule — et donc, indirectement, combien de trajets `PU_DO` distincts il a vus.
 
+Ta sortie :
+
+```
+{'dictvectorizer': DictVectorizer(),
+ 'randomforestregressor': RandomForestRegressor(max_depth=20, min_samples_leaf=10,
+                                                n_jobs=-1, random_state=0)}
+13221
+```
+
 **C'est la preuve que le DV a bien voyagé avec le modèle.** Tu ne l'as jamais sauvegardé séparément, tu ne l'as jamais téléchargé, et pourtant il est là, entraîné, avec son vocabulaire.
 
 ---
@@ -815,7 +907,7 @@ Le récapitulatif de tout ce document.
 | **Préprocessing** | `dv = DictVectorizer()` manipulé à la main | `DictVectorizer()` **dans** un `Pipeline` |
 | **`fit`** | `dv.fit_transform()` puis `lr.fit()` — deux appels | `pipeline.fit()` — un appel |
 | **`predict`** | `dv.transform()` puis `lr.predict()` — deux appels | `pipeline.predict()` — un appel |
-| **Risque de fuite de données** | réel (rien n'empêche un `fit_transform` sur la validation) | **structurellement impossible** |
+| **Risque de fuite de données** | réel dès qu'un transformateur à état entre en jeu (rien n'empêche un `fit_transform` sur la validation) | **structurellement impossible** |
 | **Objet produit** | un **tuple** `(dv, lr)` | **un** objet `Pipeline` |
 | **Sauvegarde** | `pickle.dump((dv, lr), f_out)` dans un fichier local | `mlflow.sklearn.log_model(pipeline, name="model")` |
 | **Où vit le modèle** | `models/lin_reg.bin`, dans le dossier | stockage d'artifacts MLflow, référencé par `models:/m-…` |
@@ -825,8 +917,18 @@ Le récapitulatif de tout ce document.
 | **Identification** | le nom du fichier | `model_id` (`models:/m-…`) et `run_id` |
 | **Pour changer de modèle** | remplacer le fichier et reconstruire l'image | changer une variable d'environnement |
 | **Métrique** | `root_mean_squared_error` | `root_mean_squared_error` (idem) |
+| **RMSE obtenu (validation, février 2021)** | **7,48** | **6,76** |
 | **Reproductibilité** | non fixée | `random_state=0` + params loggés |
 | **Ce que fait `predict.py`** | `dv.transform()` puis `model.predict()` | `model.predict()` |
+
+### Une ligne de ce tableau mérite un commentaire : le RMSE
+
+Les deux notebooks sont directement comparables — mêmes features (`PU_DO` + `trip_distance`), même entraînement sur janvier 2021, même validation sur février 2021. Le RMSE passe de **7,48** à **6,76**, soit **9,6 % d'erreur en moins**. L'unité est la minute : une erreur *quadratique* moyenne de l'ordre de 6 minutes 45 au lieu de 7 minutes 29. Attention au mot « moyenne » : le RMSE n'est pas l'erreur moyenne (ça, c'est le MAE) — il élève les écarts au carré avant de moyenner, donc il **surpondère les gros ratés**. Deux modèles de même MAE peuvent avoir des RMSE très différents si l'un se plante rarement mais lourdement.
+
+Deux réserves de méthode, parce qu'un chiffre isolé ne vaut rien :
+
+- Le gain vient du **modèle** (forêt aléatoire contre régression linéaire), pas du `Pipeline`. Le `Pipeline` ne change strictement rien à la qualité des prédictions — il change la façon dont le code est écrit et déployé. Ne confonds pas les deux apports de ce notebook.
+- Un RMSE plus bas sur *une* période de validation ne prouve pas qu'un modèle est meilleur en production. C'est un indice, pas une preuve.
 
 ### La phrase à retenir
 
@@ -954,6 +1056,14 @@ La compétence de debug la plus rentable que tu puisses acquérir, en quatre ré
 
 ## 13. Mémo : les commandes et les vérifications
 
+### Prérequis : les données
+
+⚠️ **Le notebook n'est pas réexécutable tel quel après un clone.** Le `.gitignore` du dépôt exclut `data/`, `*.parquet`, `*.db` et `**/artifacts/`. La cellule 4 lèvera donc un `FileNotFoundError`. La commande de téléchargement est dans `04-IT-web-service-mlflow.md`, §3 (« Prérequis : les données »).
+
+Et pour la même raison, cette ligne mérite d'être lue deux fois :
+
+> **`models:/m-5e276730f7004842b7c3a36ea11b5044` meurt au premier réentraînement.** Cet identifiant est cité partout dans ces notes, mais il ne vaut que pour *ton* `mlflow.db` actuel. Si tu repars d'une base neuve, ou si tu relances la cellule 5, tu obtiens un nouvel identifiant. Ne le recopie jamais depuis ces notes : relis-le dans `model_info.model_uri`. C'est exactement la leçon du `RUN_ID` codé en dur du cours (§9), appliquée à ce document-ci.
+
 ### Avant de lancer le notebook
 
 ```bash
@@ -961,26 +1071,13 @@ conda activate mlopszoomcamp
 cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow
 ```
 
-Lancer le serveur MLflow dans un terminal dédié (détaillé dans `04-IT-web-service-mlflow.md`) :
-
-```bash
-mlflow server \
-  --backend-store-uri sqlite:////workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/mlflow.db \
-  --default-artifact-root /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts \
-  --host 0.0.0.0 \
-  --port 5000
-```
+Lancer le serveur MLflow dans un terminal dédié — la commande complète, ses drapeaux et le piège du `--host` sont dans `04-IT-web-service-mlflow.md`, §3. Une seule source pour cette commande : si elle change, elle change là.
 
 Puis **vérifie le kernel du notebook** : il doit être `mlopszoomcamp`, pas `base`.
 
 ### Vérifier ses versions
 
-```bash
-python -c "import sys, sklearn, mlflow; print(sys.version.split()[0], sklearn.__version__, mlflow.__version__)"
-# → 3.11.16 1.9.0 3.16.0
-```
-
-Ces trois valeurs sont **critiques** : ton modèle a été sérialisé par elles. Tu les réutiliseras telles quelles dans le `Pipfile`.
+Avant d'entraîner, relève Python, scikit-learn et MLflow — la commande est au §8 de `04-IT-web-service-mlflow.md` (« Relever les versions exactes »). Ces trois valeurs sont **critiques** : ton modèle est sérialisé par elles, et tu les réutiliseras telles quelles dans le `Pipfile`.
 
 ### Inspecter le modèle après l'entraînement
 
@@ -1003,6 +1100,7 @@ print(len(pipeline.named_steps['dictvectorizer'].feature_names_))
 
 Pour graver la distinction « le modèle vit en mémoire » / « le serveur est requis au démarrage » :
 
+0. `echo $MODEL_URI` → vérifie que la variable est encore posée **dans ce terminal**. Sinon l'étape 4 plantera pour une tout autre raison, et tu tireras la mauvaise conclusion.
 1. Lance le service, `test.py` fonctionne.
 2. Arrête MLflow (`Ctrl+C` dans son terminal).
 3. Relance `test.py` → **ça marche encore** (le modèle est en RAM).

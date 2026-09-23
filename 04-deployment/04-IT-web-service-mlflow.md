@@ -7,6 +7,8 @@
 
 Ce document suit le plan que tu avais commencé dans `04-buildmyservice.md`, complété des étapes qui manquaient.
 
+> **Tu reviens ici pour refaire, pas pour comprendre ?** Va directement au **§19 — Cheat sheet** : le parcours complet en une page. Puis au **§18 — Dépannage** si ça casse. Le reste de ce document explique *pourquoi* chaque ligne est là.
+
 ---
 
 ## Sommaire
@@ -25,10 +27,11 @@ Ce document suit le plan que tu avais commencé dans `04-buildmyservice.md`, com
 12. [Étape 9 — Construire l'image](#12-%C3%A9tape-9--construire-limage)
 13. [Étape 10 — Lancer le conteneur : les deux obstacles](#13-%C3%A9tape-10--lancer-le-conteneur--les-deux-obstacles)
 14. [Étape 11 — Tester](#14-%C3%A9tape-11--tester)
-15. [Récapitulatif : environnements, shells, terminaux, ports](#15-r%C3%A9capitulatif--environnements-shells-terminaux-ports)
-16. [Différences avec le setup `web-service`](#16-diff%C3%A9rences-avec-le-setup-web-service)
-17. [Dépannage](#17-d%C3%A9pannage)
-18. [Cheat sheet des commandes](#18-cheat-sheet-des-commandes)
+15. [Les trois architectures, en schémas](#15-les-trois-architectures-en-sch%C3%A9mas)
+16. [Récapitulatif : environnements, shells, terminaux, ports](#16-r%C3%A9capitulatif--environnements-shells-terminaux-ports)
+17. [Différences avec le setup `web-service`](#17-diff%C3%A9rences-avec-le-setup-web-service)
+18. [Dépannage](#18-d%C3%A9pannage)
+19. [Cheat sheet des commandes](#19-cheat-sheet-des-commandes)
 
 ---
 
@@ -167,9 +170,24 @@ La colonne du milieu est la seule qui bouge au fil du chapitre :
 
 Et le terminal 3 ne change **jamais** : `python test.py`. C'est ton point de repère fixe.
 
+> Ce schéma est volontairement grossier — il vaut pour les trois variantes à la fois. Le **§15** reprend chacune en détail, avec ce qui se passe au démarrage et à chaque requête. N'y va pas tout de suite : il n'a d'intérêt qu'une fois les trois étapes traversées.
+
 ---
 
 ## 3. Étape 0 — Lancer le serveur MLflow et entraîner
+
+### Prérequis : les données
+
+⚠️ Avant toute chose, vérifie que les deux fichiers de données sont là. Le `.gitignore` du dépôt exclut `data/`, `*.parquet`, `*.db` et `**/artifacts/` : après un clone frais, le notebook lèvera un `FileNotFoundError` à la cellule 4.
+
+```bash
+cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow
+ls data/green_tripdata_2021-0[12].parquet || (
+  mkdir -p data && cd data
+  wget https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2021-01.parquet
+  wget https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2021-02.parquet
+)
+```
 
 ### La commande
 
@@ -193,7 +211,9 @@ mlflow server \
 | `--host` | sur quelles interfaces réseau écouter |
 | `--port` | sur quel port |
 
-> **Le quadruple slash** de `sqlite:////workspaces/...` n'est pas une faute de frappe. La syntaxe est `sqlite://` + chemin. Comme le chemin est absolu, il commence lui-même par `/` — d'où quatre barres au total. Avec trois, tu obtiens un chemin relatif.
+> **Le quadruple slash** de `sqlite:////workspaces/...` n'est pas une faute de frappe. La forme complète est `sqlite://<hôte>/<chemin>`. L'hôte est vide (la base est locale), ce qui donne déjà `sqlite:///` ; puis le chemin absolu ajoute son propre `/` en tête — quatre barres au total.
+>
+> Trois barres = chemin **relatif** au répertoire courant. Quatre = chemin **absolu**. C'est une source d'erreur classique : la base se crée au mauvais endroit et tu ne retrouves plus tes runs.
 
 ### `--host 0.0.0.0` et non `127.0.0.1`
 
@@ -214,6 +234,8 @@ Ce n'est pas « MLflow n'existe pas », c'est « MLflow n'accepte pas les connex
 
 Mets `0.0.0.0` dès le départ, ça t'évitera de tout relancer plus tard.
 
+> Tu recroiseras cette distinction quatre fois dans ce chapitre. Le tableau de synthèse est au **§16** (« `0.0.0.0` vs `127.0.0.1` — le tableau à retenir ») ; les occurrences suivantes y renvoient plutôt que de tout réexpliquer.
+
 ### Ce que produit le notebook
 
 Le notebook (`random-forest.ipynb`, voir l'autre document) produit une chaîne :
@@ -223,6 +245,8 @@ models:/m-5e276730f7004842b7c3a36ea11b5044
 ```
 
 C'est le seul livrable de cette étape, et le contrat avec le reste du chapitre.
+
+> ⚠️ **Cet identifiant est cité partout dans ces notes, et il meurt au premier réentraînement.** Il ne vaut que pour *ton* `mlflow.db` actuel. Si tu relances la cellule 5 ou si tu repars d'une base neuve, tu obtiens un nouveau `m-…`. Ne le recopie jamais depuis ces notes : relis-le dans `model_info.model_uri` (cellule 6 du notebook). C'est la leçon du `RUN_ID` codé en dur du cours, appliquée à ce document-ci.
 
 ---
 
@@ -240,6 +264,11 @@ MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://127.0.0.1:5000')
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 MODEL_URI = os.getenv('MODEL_URI')
+if MODEL_URI is None:
+    raise RuntimeError(
+        "MODEL_URI n'est pas définie : export MODEL_URI='models:/m-…' "
+        "(ou docker run -e MODEL_URI=…)"
+    )
 
 # --- 2. Chargement du modèle : UNE SEULE FOIS, au démarrage ---
 model = mlflow.pyfunc.load_model(MODEL_URI)
@@ -275,6 +304,8 @@ if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=9696)
 ```
 
+> La garde `if MODEL_URI is None` n'est **pas encore dans ton dépôt** : c'est l'ajout que ces notes recommandent, expliqué au Bloc 1. Tout le reste est le fichier tel qu'il est.
+
 ### Bloc 1 — La configuration sort du code
 
 ```python
@@ -298,6 +329,8 @@ Remarque la dissymétrie, elle est délibérée :
 
 C'est la leçon la plus transférable de ce fichier : **un défaut qui prend le relais sans bruit est un incident en préparation.** Mieux vaut échouer fort et tôt.
 
+**Fort, tôt — et lisible.** Sans le `if MODEL_URI is None`, l'échec est bien immédiat, mais `load_model(None)` produit une traceback qui parle de MLflow, pas de ta variable (voir plus bas). Les trois lignes de garde ne coûtent rien et transforment vingt minutes de recherche en une lecture. C'est la vraie fin de l'argument : un échec précoce n'a de valeur que si son message désigne la cause.
+
 ### Réponse à ta question : faut-il faire `export MODEL_URI` ?
 
 Oui, **à chaque fois que tu lances le service hors Docker**, et **dans le terminal où tu le lances**.
@@ -313,6 +346,8 @@ Trois choses à savoir :
 - La variable ne vit que dans **ce shell**. Nouveau terminal → nouvel `export`. Ce n'est pas un réglage du projet, c'est un état de processus.
 - Elle est héritée par les **processus enfants**. C'est pour ça que `python predict.py`, lancé depuis ce shell, la voit.
 - En Docker, l'équivalent est `-e MODEL_URI='...'` sur le `docker run`. Ton `export` local n'a **aucun effet** sur un conteneur : un conteneur ne partage pas l'environnement de ton shell.
+
+**À quoi ressemble l'oubli.** C'est de loin l'erreur numéro un de ce chapitre, et le message ne te dit pas « tu as oublié l'export ». Sans la garde ajoutée au Bloc 1, `os.getenv('MODEL_URI')` rend `None`, puis `load_model(None)` plante sur une URI invalide ou un `NoneType` — une traceback qui parle de MLflow, pas de ta variable. Avec la garde, le message te dit quoi faire. D'où le réflexe : **`echo $MODEL_URI` avant chaque lancement**, et la ligne correspondante dans le tableau de dépannage du §18.
 
 > Si tu en as assez de retaper l'`export`, un fichier `.env` à la racine du dossier fait l'affaire (`python-dotenv`, ou `set -a; source .env; set +a`). Mais alors **ajoute-le au `.gitignore` et au `.dockerignore`** — c'est le genre de fichier qui finit par contenir des credentials.
 
@@ -424,6 +459,8 @@ Conséquence, et c'est tout l'intérêt :
 
 `debug=True` active le rechargement automatique : Flask surveille tes fichiers et redémarre dès que tu en sauvegardes un. Pratique en dev, à proscrire en production (il expose un débogueur interactif).
 
+> **Pourquoi tu vois les logs MLflow passer deux fois au lancement.** Le rechargeur fonctionne en lançant un processus *superviseur* qui démarre à son tour le vrai processus applicatif. Les deux importent `predict.py`, donc `load_model` s'exécute **deux fois**. Tu n'as rien cassé. Et ça confirme au passage le point du §4 : le chargement a lieu à l'import du module, pas à la première requête.
+
 ### Les blocs commentés en tête de ton fichier
 
 Ton `predict.py` conserve trois versions historiques en commentaire :
@@ -443,6 +480,8 @@ model = mlflow.pyfunc.load_model(MODEL_URI)
 ```
 
 C'est utile pour apprendre — on voit l'évolution. C'est encombrant pour un fichier qu'on garde. Si tu veux conserver la trace, elle appartient à ce document de notes, pas au fichier de production.
+
+Dans la même famille : ton `predict.py` commence encore par `import pickle`, hérité de la version `web-service`. Plus rien ne l'utilise depuis que le modèle vient de MLflow. Un import mort ne coûte rien à l'exécution, mais il raconte une histoire fausse à qui lit le fichier.
 
 > Attention aussi : le bloc entre `'''` n'est pas un commentaire au sens strict. C'est une **chaîne de caractères** évaluée puis jetée. En tête de module, Python la prendrait même pour une *docstring*. Ça fonctionne, mais le vrai commentaire multi-ligne en Python, c'est `#` sur chaque ligne (ou `Cmd+/` dans VS Code).
 
@@ -474,7 +513,7 @@ Quatre choses à comprendre.
 
 **`test.py` ne change JAMAIS.** C'est le point central du chapitre, et la réponse à la question que tu posais : comment tester quand on passe de Flask à gunicorn, puis à Docker ?
 
-| Étape | Terminal 1 (serveur) | Terminal 3 (client) |
+| Étape | Terminal 2 (serveur) | Terminal 3 (client) |
 |---|---|---|
 | Flask dev | `python predict.py` | `python test.py` |
 | Gunicorn | `gunicorn --bind=0.0.0.0:9696 predict:app` | `python test.py` |
@@ -491,10 +530,12 @@ Une seule colonne bouge.
 > ```bash
 > curl -X POST http://localhost:9696/predict \
 >   -H "Content-Type: application/json" \
->   -d '{"PULocationID": "10", "DOLocationID": "50", "trip_distance": 40}'
+>   -d '{"PULocationID": 10, "DOLocationID": 50, "trip_distance": 40}'
 > ```
 >
 > `curl` ne connaît ni Python, ni Flask, ni ton modèle. Il parle HTTP, et ça suffit.
+>
+> Essaie aussi avec `"PULocationID": "10"` (une chaîne) : ça marche encore, parce que le `'%s_%s'` de `prepare_features` gomme la différence. Pratique — et dangereux : le service accepte n'importe quel type sans broncher. C'est exactement l'ambiguïté qu'une *signature* MLflow (voir `04-python-web-service-mlflow.md`, §11) rendrait explicite.
 
 ### Serveur et client : deux programmes, deux terminaux
 
@@ -504,7 +545,15 @@ Une seule colonne bouge.
 | Durée de vie | tourne en permanence | s'exécute en une seconde et se termine |
 | Effet sur le terminal | le bloque jusqu'au `Ctrl+C` | le rend immédiatement |
 
-Lancer `test.py` sans serveur actif donne une `ConnectionRefusedError`. C'est le premier réflexe de debug : *le serveur tourne-t-il vraiment ?*
+Lancer `test.py` sans serveur actif donne cette erreur — lis-la jusqu'au bout, l'information utile est à la fin :
+
+```
+requests.exceptions.ConnectionError: HTTPConnectionPool(host='localhost', port=9696):
+Max retries exceeded with url: /predict
+(Caused by NewConnectionError(... [Errno 111] Connection refused))
+```
+
+`requests` enveloppe l'erreur système dans la sienne : ce n'est donc pas `ConnectionRefusedError` que tu dois chercher dans un moteur de recherche, mais `[Errno 111] Connection refused`. C'est le premier réflexe de debug : *le serveur tourne-t-il vraiment ?*
 
 ---
 
@@ -522,12 +571,14 @@ Tu obtiens un avertissement en rouge :
 WARNING: This is a development server. Do not use it in a production deployment.
 ```
 
-Il est justifié. Le serveur de développement intégré à Flask (qui s'appelle **Werkzeug**) est :
+Il est justifié, mais pas pour la raison qu'on croit. Le serveur de développement vient de **Werkzeug**, la bibliothèque WSGI sur laquelle Flask est bâti. Contrairement à une idée répandue, il **traite bien plusieurs requêtes en parallèle** : `app.run()` active `threaded=True` par défaut depuis Flask 1.0.
 
-- mono-processus : une requête à la fois
-- non durci contre les attaques
-- sans timeout ni limite configurable
-- fragile : un crash dans le code fait tomber tout le serveur
+Ce qui lui manque est tout le reste :
+
+- aucune gestion de charge, aucun timeout configurable
+- aucun redémarrage automatique si le processus meurt
+- non durci contre les requêtes malveillantes
+- un crash fait tomber le serveur entier
 
 Il est parfait pour développer — notamment grâce au rechargement automatique de `debug=True`. Il n'a rien à faire en production.
 
@@ -594,13 +645,21 @@ gunicorn --bind=0.0.0.0:9696 --workers=4 predict:app
 
 Règle empirique : `(2 × nombre de cœurs) + 1`. Ton Codespace ayant 2 cœurs, reste autour de 4–5.
 
+> ⚠️ **Écart à signaler dans ton dépôt** : l'`ENTRYPOINT` de ton `Dockerfile` ne passe **aucun** `--workers`. Ton image dite « de production » tourne donc avec un worker unique. Ce n'est pas grave pour apprendre, mais ne te raconte pas que l'image est prête pour la production : il y manque au minimum `--workers` et `--timeout`.
+
 **Attention** : chaque worker charge sa **propre copie** du modèle en mémoire. Avec un modèle de quelques centaines de Ko, sans importance. Avec un modèle d'un Go sur une machine à 8 Go, le nombre de workers devient un calcul, et la RAM devient le facteur limitant avant le CPU.
+
+> Nuance : `--preload` change la donne. Le maître importe alors `predict.py` **une fois** — donc charge le modèle une fois — puis *forke* les workers, qui héritent de sa mémoire en copie-sur-écriture. Tant que personne n'écrit dans le modèle, la RAM n'est payée qu'une fois. Le prix : un redémarrage de worker ne relit plus le code.
+
+**Le piège gunicorn de ce chapitre.** Un worker a **30 secondes** par défaut pour démarrer. Or ton démarrage inclut la résolution de `models:/` et le téléchargement du modèle. Si ça dépasse — réseau lent, gros modèle — gunicorn tue le worker avec `[CRITICAL] WORKER TIMEOUT`, en relance un, qui retélécharge, qui est tué… Le service ne répond jamais et le terminal défile. La parade : `--timeout 120` (ou `--preload`, qui charge dans le maître, hors du chrono des workers). C'est dans le tableau de dépannage du §18.
 
 ### Rien n'est « par défaut » ni persistant
 
 Installer gunicorn ne change **rien** automatiquement. Il n'existe aucune configuration mémorisée quelque part disant « ce projet tourne avec gunicorn ». Il n'y a qu'un **processus vivant**, issu de la commande que tu as tapée. Ferme le terminal, relance `python predict.py` demain : tu es de retour sur le serveur de dev.
 
-Et les deux ne peuvent pas cohabiter : **un port n'accepte qu'un seul processus**. Lancer `python predict.py` pendant que gunicorn écoute sur 9696 donne `OSError: [Errno 98] Address already in use`.
+Et les deux ne peuvent pas cohabiter : **un port ne peut être *lié* qu'une seule fois**. Lancer `python predict.py` pendant que gunicorn écoute sur 9696 donne `OSError: [Errno 98] Address already in use`.
+
+> Nuance pour plus tard : gunicorn avec plusieurs workers n'y déroge pas. Le processus maître lie le port **une fois**, et les workers héritent de la même socket d'écoute. Chacun appelle `accept()` dessus de son côté ; c'est le **noyau** qui attribue chaque connexion entrante à l'un d'eux — le maître ne distribue rien, il surveille et redémarre les workers.
 
 C'est au `ENTRYPOINT` du Dockerfile que gunicorn deviendra enfin un vrai « par défaut » — parce qu'il sera alors **du code versionné dans git**, et non plus une commande à se rappeler.
 
@@ -636,7 +695,18 @@ for a in mlflow.artifacts.list_artifacts(artifact_uri=model_info.model_uri):
 # MLmodel, conda.yaml, model.skops, python_env.yaml, requirements.txt
 ```
 
-**Lis ce `requirements.txt` avant d'écrire ton `Pipfile`.** Il liste les dépendances nécessaires pour recharger *ce modèle-là* — et il en contient une que tu n'aurais pas devinée : `skops`, le format de sérialisation utilisé par MLflow 3 à la place du pickle (voir `04-python-web-service-mlflow.md`, §7). Sans elle dans l'image, le conteneur ne peut pas charger le modèle.
+**Lis ce `requirements.txt` avant d'écrire ton `Pipfile`.** Il liste les versions exactes avec lesquelles *ce modèle-là* a été écrit, et il t'apprend un nom que tu n'aurais pas deviné : **`skops`**, le format de sérialisation utilisé par MLflow 3 à la place du pickle (voir `04-python-web-service-mlflow.md`, §7).
+
+Pour le lire, et non seulement le lister, il faut aller chercher son contenu — depuis le notebook, ou depuis un `python` lancé dans `mlopszoomcamp` :
+
+```python
+import mlflow
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
+MODEL_URI = 'models:/m-5e276730f7004842b7c3a36ea11b5044'
+print(mlflow.artifacts.load_text(MODEL_URI + "/requirements.txt"))
+```
+
+> `list_artifacts` ne rend que des **noms** de fichiers ; `load_text` rend leur **contenu**. Et si tu lances le snippet précédent depuis un terminal frais, `model_info` n'existe pas — c'est une variable du notebook. D'où l'URI en dur ici.
 
 > Pour un pickle fait à la main (comme `lin_reg.bin`), il faut fouiller les octets :
 > ```bash
@@ -674,11 +744,30 @@ Le principe général, à retenir :
 conda activate mlopszoomcamp
 cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow
 
-rm -f Pipfile Pipfile.lock          # les fichiers du cours datent de 2022
-pipenv install --python=3.11.16 scikit-learn==1.9.0 mlflow==3.16.0 skops==0.14.0 flask gunicorn
+rm -f Pipfile Pipfile.lock          # ⚠️ UNE SEULE FOIS — voir l'avertissement ci-dessous
+pipenv install --python=3.11 scikit-learn==1.9.0 mlflow==3.16.0 skops==0.14.0 flask gunicorn
 ```
 
-> `conda activate` avant `pipenv install` sert uniquement à ce que `--python=3.11.16` **trouve** l'interpréteur. Pipenv ne l'installe pas, il le cherche.
+> ⚠️ **Le `rm -f` est à faire une seule fois**, pour jeter les fichiers livrés par le cours (ils datent de 2022). Dès la deuxième lecture de ce document, le `Pipfile` de ce dossier sera **le tien** : ne le supprime pas, tu perdrais tes versions épinglées. Si un `Pipfile` correct est déjà là, saute cette ligne et fais simplement `pipenv sync` (pas `pipenv install`, qui peut re-résoudre le lock si `Pipfile` et `Pipfile.lock` ont divergé — voir §19).
+
+> `--python=3.11` et non `3.11.16` : pipenv écrit cette contrainte dans `[requires]`, et c'est elle que `--deploy` vérifiera dans l'image. Avec la version complète, tu obtiens `python_full_version = "3.11.16"` — c'est l'état actuel de ton `Pipfile` — et une image `python:3.11-slim` peut être refusée, voir §11.
+>
+> `conda activate` avant `pipenv install` sert uniquement à ce que `--python=3.11` **trouve** l'interpréteur dans ton `PATH`. Pipenv le cherche, il ne le fabrique pas. (Si `pyenv` est installé sur la machine, les versions récentes de pipenv peuvent proposer de télécharger la version manquante — ce n'est pas le cas sur ton Codespace.)
+
+### Sers-t'en une fois avant Docker
+
+Tu viens de créer un virtualenv que, dans la suite de ce document, tu n'utilises **jamais** en local — tout tourne dans `mlopszoomcamp`, et le pipenv ne sert qu'à produire le `Pipfile.lock` pour l'image. Question légitime : pourquoi le garder sur le disque ?
+
+Parce qu'il est la **validation la moins chère du lock**. Avant de lancer un build de trois minutes :
+
+```bash
+export MODEL_URI='models:/m-…'
+pipenv run gunicorn --bind=0.0.0.0:9696 predict:app     # dans le virtualenv du dossier, pas dans conda
+```
+
+Si ça démarre et que `test.py` répond, ton `Pipfile.lock` contient tout ce qu'il faut pour servir le modèle — et tu le sais en dix secondes. Si ça plante ici, ça aurait planté dans l'image, après le build. Même principe qu'au §18 : **une nouveauté à la fois** — d'abord l'environnement, ensuite le conteneur.
+
+> `pipenv run` plutôt que `pipenv shell`, pour la raison du §1 : pas de sous-shell, donc conda ne s'invite pas.
 
 ### Pourquoi épingler sklearn, mlflow et skops mais pas flask ni gunicorn ?
 
@@ -686,11 +775,13 @@ pipenv install --python=3.11.16 scikit-learn==1.9.0 mlflow==3.16.0 skops==0.14.0
 |---|---|---|
 | `scikit-learn` | **oui** | touche à la sérialisation du modèle — une différence de version casse le chargement |
 | `mlflow` | **oui** | idem : il écrit et relit le format du modèle |
-| `skops` | **oui** | c'est **le** format de sérialisation du modèle (`model.skops`) — sans lui, pas de chargement |
+| `skops` | **oui** | c'est le format dans lequel le modèle est écrit (`model.skops`) — on fige la version qui l'a écrit |
 | `flask` | non | ne fait que servir des requêtes HTTP ; aucun impact sur le modèle |
 | `gunicorn` | non | idem |
 
 La règle est nette : **tout ce qui touche à la sérialisation est épinglé, le reste est libre.**
+
+> ⚠️ Ne te trompe pas sur la raison d'ajouter `skops`. Ce n'est **pas** pour garantir sa présence : `skops<1` est une dépendance **cœur** de MLflow, donc `pipenv install mlflow==3.16.0` l'installe de toute façon. C'est pour en **figer la version**, exactement comme pour scikit-learn. La preuve que la présence n'est pas le sujet : un `Pipfile` sans `skops` produit quand même un `Pipfile.lock` qui le contient.
 
 Ce n'est pas de la négligence : **épingler ce qui n'a pas besoin de l'être crée de la dette**. Chaque version figée est une mise à jour de sécurité que tu devras faire à la main un jour.
 
@@ -711,15 +802,18 @@ C'est le **lock** qui garantit la reproductibilité, pas le Pipfile. Le Pipfile 
 
 ### `[packages]` vs `[dev-packages]`
 
+Voici le `Pipfile` **cible**, tel qu'il doit finir. Le tien n'y est pas encore — sa section `[dev-packages]` est vide, voir l'avertissement plus bas.
+
 ```toml
 [packages]          # part dans l'image Docker
 flask = "*"
 gunicorn = "*"
 scikit-learn = "==1.9.0"
 mlflow = "==3.16.0"
+skops = "==0.14.0"
 
 [dev-packages]      # ne part PAS dans l'image
-requests = "*"
+requests = "*"      # ← à ajouter : pipenv install --dev requests
 ```
 
 La distinction est conceptuelle et importante :
@@ -751,7 +845,7 @@ mlflow.set_tracking_uri("http://127.0.0.1:5000")
 
 Souviens-toi du principe : **`127.0.0.1` désigne toujours celui qui parle**. Un conteneur Docker possède sa propre pile réseau, donc **son propre `127.0.0.1`** — le sien, pas celui du Codespace. Depuis l'intérieur du conteneur, cette adresse pointe vers le conteneur lui-même, où rien n'écoute sur le port 5000.
 
-Même famille de problème, troisième occurrence dans ce module. (Les deux premières : le tunnel SSH du module 2, et le `--host` de MLflow.)
+Même famille de problème, **troisième occurrence** dans ce module. (Les deux premières : le tunnel SSH du module 2, et le `--host` de MLflow au §3. La quatrième t'attend au `--bind` de gunicorn en conteneur.)
 
 ### La solution : sortir la configuration du code
 
@@ -771,9 +865,9 @@ C'est exactement le même principe que celui appliqué à `MODEL_URI` — et c'e
 
 Adresses, chemins, credentials, ports. Ce qui reste dans le fichier, c'est la logique — la partie qui est vraie partout.
 
-**N'oublie pas `Cmd+S`.** VS Code te montre un **buffer en mémoire** ; Python lit le **fichier sur le disque**. Tant que tu n'as pas sauvegardé, ce sont deux choses différentes. Le signal : un **point ●** au lieu de la croix dans l'onglet.
+**N'oublie pas de sauvegarder** (`Ctrl+S` sur Codespace et Linux, `Cmd+S` sur macOS). VS Code te montre un **buffer en mémoire** ; Python lit le **fichier sur le disque**. Tant que tu n'as pas sauvegardé, ce sont deux choses différentes. Le signal : un **point ●** au lieu de la croix dans l'onglet.
 
-> Le confort : active l'auto-save — `Cmd+Shift+P` → `Preferences: Open Settings (UI)` → chercher `auto save` → mettre `afterDelay`.
+> Le confort : active l'auto-save — `Ctrl+Shift+P` (`Cmd+Shift+P` sur macOS) → `Preferences: Open Settings (UI)` → chercher `auto save` → mettre `afterDelay`.
 >
 > Jupyter n'a pas ce problème, parce que le code de la cellule est envoyé directement au kernel. C'est justement pour ça que le piège surprend quand on passe du notebook au script.
 
@@ -839,7 +933,10 @@ L'image de base, récupérée depuis Docker Hub. Tu ne pars jamais de zéro : tu
 
 **Le choix de 3.11 n'est pas arbitraire** : c'est la version qui a servi à entraîner et sérialiser le modèle. Une autre version, et tu risques l'incompatibilité de pickle.
 
-> ⚠️ Ton `Pipfile` déclare `python_full_version = "3.11.16"`. Le tag `python:3.11-slim` livre la dernière 3.11 publiée, qui n'est pas forcément la .16. Si `--deploy` refuse de construire en se plaignant de la version de Python, c'est de là que ça vient : passe à `FROM python:3.11.16-slim`.
+> ⚠️ Ton `Pipfile` déclare **deux** contraintes : `python_version = "3.11"` et `python_full_version = "3.11.16"`. La seconde a été écrite par `pipenv install --python=3.11.16`. Or le tag `python:3.11-slim` livre la dernière 3.11 publiée, qui n'est pas forcément la .16. Si `--deploy` refuse de construire en se plaignant de la version de Python, c'est de là que ça vient. Deux sorties, la première est la bonne :
+>
+> 1. **Supprimer la ligne `python_full_version` du `Pipfile`** (ou recréer le pipenv avec `--python=3.11`, comme le §9 le recommande désormais) : tu ne veux figer que la mineure, c'est elle qui compte pour la compatibilité ; le patch n'apporte que des correctifs de sécurité que tu *veux* recevoir.
+> 2. Épingler l'image : `FROM python:3.11.16-slim`. Ça marche, mais tu t'interdis les correctifs de la 3.11 tant que tu ne rebuild pas à la main.
 
 #### `RUN pip install -U pip && pip install pipenv`
 
@@ -881,6 +978,13 @@ Or l'installation des dépendances prend plusieurs minutes, alors que ton `predi
 - tu modifies le `Pipfile` → tout est recalculé à partir de là, mais c'est rare
 
 Inverse les deux lignes, et chaque build repart de zéro. C'est une règle qu'on retrouve dans tous les Dockerfiles bien écrits : **du plus stable au plus volatil**.
+
+> **Vérifie ta compréhension.** Tu corriges une faute de frappe dans `predict.py` et tu relances `docker build`. Quelles couches sont recalculées ? Et si le Dockerfile commençait par `COPY . .` ?
+>
+> <details><summary>Réponse</summary>
+>
+> Seule la couche `COPY ["predict.py", "./"]` et celles qui la suivent (`EXPOSE`, `ENTRYPOINT`, quasi gratuites). `FROM`, `pip install pipenv`, `COPY Pipfile*` et `pipenv install` sortent du cache. Avec `COPY . .` en première instruction, le fichier modifié fait partie de cette couche, donc **tout** ce qui suit est recalculé — dépendances comprises.
+> </details>
 
 #### `RUN pipenv install --system --deploy`
 
@@ -924,12 +1028,27 @@ artifacts/
 mlruns/
 ```
 
+> ⚠️ **Écart à corriger dans ton dépôt** : c'est le fichier tel qu'il est, et il lui manque trois choses que ces notes créent ou signalent ailleurs — `data/` et `*.parquet` (§3, plusieurs Mo de données), `*.bin` (le `dict_vectorizer.bin` vestige, voir l'autre document §7) et `.env` (§4, si tu adoptes un fichier de variables). Version complète :
+>
+> ```
+> __pycache__/
+> *.ipynb
+> .ipynb_checkpoints/
+> mlflow.db
+> artifacts/
+> mlruns/
+> data/
+> *.parquet
+> *.bin
+> .env
+> ```
+
 Même syntaxe qu'un `.gitignore`. Le client filtre **avant** l'envoi au démon.
 
 Sans lui, **tout** le dossier est transféré au démon à chaque build — y compris ta base SQLite et ton dossier `artifacts/`, qui grossit à chaque run MLflow. Trois impacts concrets :
 
 - **Vitesse.** Le transfert prend du temps, surtout si le démon est distant (CI/CD, Docker Desktop sur macOS où le démon tourne dans une VM).
-- **Cache.** Docker calcule une empreinte du contexte. Un fichier non ignoré qui change — un `.pyc` régénéré, un checkpoint Jupyter, un nouveau run MLflow — invalide le cache et déclenche un rebuild complet des dépendances. Tu perds trois minutes pour rien.
+- **Cache.** Le cache d'un `COPY` dépend de l'empreinte des **fichiers copiés**, pas du contexte entier. Ton Dockerfile copie des fichiers nommés (`Pipfile`, `Pipfile.lock`, `predict.py`) : un `.pyc` régénéré ou un nouveau run MLflow ne lui fait donc rien. Mais avec un `COPY . .` — l'écriture qu'on voit dans neuf tutoriels sur dix — n'importe quel fichier modifié dans le contexte invalide la couche et tout ce qui suit, y compris l'installation des dépendances. Trois minutes perdues pour un checkpoint Jupyter. Une raison de plus de ne jamais écrire `COPY . .` sans `.dockerignore`.
 - **Sécurité.** Si tu as un `.env` avec des credentials ou une clé AWS dans le dossier, un `COPY . .` distrait les embarque dans l'image. Et **une couche d'image est permanente** : même si tu supprimes le fichier dans une instruction suivante, il reste récupérable dans l'historique des couches. C'est une fuite de secrets classique.
 
 > `.dockerignore` n'est pas qu'une optimisation, c'est un **garde-fou**. Sur un projet ML où le dossier contient des données, des credentials cloud et des artefacts MLflow, c'est un fichier qu'on écrit dès le début.
@@ -952,11 +1071,15 @@ docker build -t ride-duration-prediction-service:v2 .
 
 ### Le build context, en détail
 
-Le `.` final désigne le dossier **envoyé au démon Docker**. Tu vois passer :
+Le `.` final désigne le dossier **envoyé au démon Docker**. Tu vois passer une ligne de *transfert de contexte* :
 
 ```
-Sending build context to Docker daemon  4.096kB
+[+] Building 0.3s (9/9) FINISHED
+ => [internal] load build context
+ => => transferring context: 4.10kB
 ```
+
+> Beaucoup de tutoriels montrent à la place `Sending build context to Docker daemon  4.096kB`. C'est l'ancien constructeur : depuis Docker 23 (2023), `docker build` utilise **BuildKit** par défaut, dont la sortie est celle ci-dessus. Même mécanisme, affichage différent.
 
 C'est littéralement un transfert. Le client compresse le dossier, l'expédie au démon, et **le démon travaille sur sa copie**.
 
@@ -994,8 +1117,8 @@ Il faut séparer **deux moments de vie** :
 │  docker pull mon-registry/ride-duration:v2           │
 │  docker run -p 9696:9696 ride-duration:v2            │
 │                                                      │
-│  ➜ Aucun besoin du dossier source, du Dockerfile,   │
-│    de Python, de pipenv, de scikit-learn.           │
+│  ➜ Aucun besoin du dossier source, du Dockerfile,    │
+│    de Python, de pipenv, de scikit-learn.            │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -1048,6 +1171,35 @@ Les deux images coexistent. Sans tag, tu n'aurais aucun moyen de désigner « la
 
 C'est l'étape la plus délicate du chapitre, parce qu'il y a **deux problèmes distincts**, et qu'on croit souvent n'en avoir qu'un.
 
+### Pourquoi il y en a deux, et pas un
+
+Parce que le conteneur a besoin de **deux choses différentes**, rangées au même endroit mais atteintes par **deux canaux différents** :
+
+```
+                 Comment le CONTENEUR atteint chaque chose
+
+  mlflow.db          ──►  JAMAIS directement.
+  (les métadonnées)       Il interroge le serveur en HTTP sur le port 5000,
+                          et c'est LE SERVEUR qui lit la base.
+                          canal = RÉSEAU        →  --add-host
+
+  artifacts/         ──►  DIRECTEMENT, comme un fichier local.
+  (model.skops)           Le serveur lui a seulement donné le chemin ;
+                          c'est le conteneur qui ouvre le fichier lui-même.
+                          canal = FICHIERS      →  -v
+```
+
+Deux canaux, deux drapeaux. Ce n'est pas une redondance : si tu n'ouvres que le réseau, le conteneur sait *où* est le modèle mais ne peut pas le lire ; si tu ne montes que le volume, il a les fichiers sous la main mais ne sait pas lequel prendre.
+
+> **Vérifie ta compréhension.** Quand le conteneur démarre, qui lit `mlflow.db` ? Faut-il le monter avec `-v` ?
+>
+> <details><summary>Réponse</summary>
+>
+> Personne dans le conteneur. C'est le **serveur MLflow**, sur l'hôte, qui ouvre `mlflow.db` pour répondre à la question « où est `m-…` ? ». Le conteneur ne voit que la réponse HTTP. Monter `mlflow.db` serait donc inutile — et dangereux : deux processus sur une même base SQLite, c'est une corruption qui attend son heure.
+> </details>
+
+> Garde cette asymétrie en tête pour la note de fin de section : en mode `mlflow-artifacts:/`, les artifacts passent **eux aussi** par le réseau. Le canal « fichiers » disparaît, et le `-v` avec lui.
+
 ### Obstacle 1 — joindre le serveur MLflow
 
 Le conteneur a son propre `127.0.0.1`. Il faut donc :
@@ -1077,12 +1229,13 @@ Il faut donc y rendre ce dossier visible, **au même chemin**. C'est le rôle du
 ### La commande complète
 
 ```bash
+cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow   # le $PWD ci-dessous en dépend
 docker run -it --rm \
   -p 9696:9696 \
   --add-host=host.docker.internal:host-gateway \
   -e MLFLOW_TRACKING_URI='http://host.docker.internal:5000' \
   -e MODEL_URI='models:/m-5e276730f7004842b7c3a36ea11b5044' \
-  -v /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:/workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:ro \
+  -v "$PWD/artifacts:$PWD/artifacts:ro" \
   ride-duration-prediction-service:v2
 ```
 
@@ -1116,6 +1269,13 @@ Le réflexe : `--rm` pour tout conteneur jetable de test. On l'omet quand on veu
 
 **L'ordre compte** : à gauche ta machine, à droite le conteneur. Les deux nombres sont **indépendants** : `-p 8080:9696` ferait écouter le service sur `localhost:8080` chez toi, le conteneur continuant d'écouter sur 9696 sans le savoir.
 
+> **Vérifie ta compréhension.** Pourquoi `-p 8080:9696` fonctionne sans reconstruire l'image ni toucher à gunicorn ?
+>
+> <details><summary>Réponse</summary>
+>
+> Parce que gunicorn n'a jamais connu que « son » 9696, à l'intérieur du conteneur. Le `-p` est un réglage de `docker run`, appliqué **autour** du conteneur : Docker écoute sur le 8080 de l'hôte et relaie vers le 9696 interne. Ni l'image ni le processus ne savent qu'un tunnel existe. C'est exactement la séparation image / conteneur du §11.
+> </details>
+
 C'est utile quand le port est déjà pris, ou pour lancer plusieurs instances :
 
 ```bash
@@ -1129,6 +1289,8 @@ Un volume rend un dossier de l'hôte visible à l'intérieur du conteneur. Le `:
 
 **Le point subtil** : ici, source et destination sont **le même chemin**. Ce n'est pas un hasard. Le conteneur va recevoir du serveur MLflow un chemin absolu (`/workspaces/…/artifacts/…`) ; en montant le dossier au même endroit, ce chemin devient valide chez lui aussi.
 
+`$PWD` est développé par **ton shell**, avant que Docker ne voie la commande : les deux côtés reçoivent le même chemin absolu, écrit une seule fois. Et la commande reste valable ailleurs qu'en Codespace — à condition d'être dans `web-service-mlflow/` au moment de la taper.
+
 > C'est aussi le seul mécanisme de ce chapitre qui lit des fichiers de l'hôte **en direct**, au `run` et non au `build`. Ne confonds pas : `COPY` fige au build, `-v` relie à l'exécution.
 
 ### L'alternative plus courte (Linux uniquement)
@@ -1136,7 +1298,7 @@ Un volume rend un dossier de l'hôte visible à l'intérieur du conteneur. Le `:
 ```bash
 docker run -it --rm --network=host \
   -e MODEL_URI='models:/m-5e276730f7004842b7c3a36ea11b5044' \
-  -v /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:/workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:ro \
+  -v "$PWD/artifacts:$PWD/artifacts:ro" \
   ride-duration-prediction-service:v2
 ```
 
@@ -1149,6 +1311,19 @@ C'est plus simple — mais **fais la première version d'abord**. Le mapping de 
 Ton service est maintenant **portable** (il embarque ses dépendances) mais **pas autonome** (il dépend de MLflow joignable et d'un dossier monté).
 
 C'est précisément le couplage dont parle l'autre document, rendu visible par Docker. Le `s3://` de l'instructeur supprime les deux contraintes d'un coup : plus de serveur à joindre, plus de volume à monter. Tu vois maintenant **concrètement** pourquoi il a fait ce choix.
+
+> **Le `-v` n'est pas une fatalité de `models:/`.** Il découle d'un choix que tu as fait au §3 : `--default-artifact-root <chemin local>`. Ce drapeau dit au serveur « les artifacts sont rangés là », et le serveur se contente alors de **te donner le chemin**.
+>
+> Lancé **sans** ce drapeau, MLflow passe en mode *artifacts proxifiés* : il sert les fichiers lui-même, en HTTP, sous le schéma `mlflow-artifacts:/`. Le conteneur reçoit alors les octets et non un chemin — et le `-v` disparaît.
+>
+> Il y a donc **deux couplages indépendants**, et trois leviers :
+>
+> | Couplage | Cause | Comment le casser |
+> |---|---|---|
+> | Il faut joindre le serveur | l'URI `models:/` est une référence indirecte | passer à une URI auto-suffisante (`s3://`) |
+> | Il faut monter un volume | `--default-artifact-root` local | laisser MLflow proxifier (`mlflow-artifacts:/`) |
+>
+> Le `s3://` casse les deux à la fois parce qu'il fait d'une pierre deux coups. Mais ce ne sont pas les deux faces d'un même problème.
 
 ---
 
@@ -1173,14 +1348,319 @@ Tu devrais obtenir :
 
 ---
 
-## 15. Récapitulatif : environnements, shells, terminaux, ports
+## 15. Les trois architectures, en schémas
+
+Tu as maintenant traversé les trois setups. Cette section les met côte à côte. Pour chacun : **où vivent les choses**, puis **ce qui se passe au démarrage**, puis **ce qui se passe à chaque requête**.
+
+Garde en tête la distinction des deux phases — c'est elle qui explique presque tout :
+
+| Phase | Quand | Qui parle à qui |
+|---|---|---|
+| **A — Démarrage** | une seule fois, au lancement du service | le service → MLflow → le disque |
+| **B — Requête** | à chaque appel client | le client → le service (et c'est tout) |
+
+---
+
+### Setup 1 — Flask seul, sans Docker
+
+#### Où vivent les choses
+
+```
+╔══════════════════════════ CODESPACE (une seule machine) ══════════════════════════╗
+║                                                                                   ║
+║   Terminal 1                    Terminal 2                    Terminal 3          ║
+║  ┌───────────────────┐        ┌────────────────────┐        ┌──────────────────┐  ║
+║  │ mlflow server     │        │ export MODEL_URI=… │        │ python test.py   │  ║
+║  │  --host 0.0.0.0   │        │ python predict.py  │        │                  │  ║
+║  │  --port 5000      │        │                    │        │ POST vers        │  ║
+║  │                   │        │ Flask dev          │        │ localhost:9696   │  ║
+║  │ écoute :5000      │        │ écoute 0.0.0.0:9696│        │ puis se termine  │  ║
+║  └───────────────────┘        └────────────────────┘        └──────────────────┘  ║
+║                                                                                   ║
+║  ┌─ le disque du Codespace ────────────────────────────────────────────────────┐  ║
+║  │  mlflow.db                    → les métadonnées (où est rangé quoi)         │  ║
+║  │  artifacts/1/…/model.skops    → les fichiers du modèle                      │  ║
+║  └─────────────────────────────────────────────────────────────────────────────┘  ║
+╚═══════════════════════════════════════════════════════════════════════════════════╝
+```
+
+#### Phase A — au démarrage (une seule fois)
+
+```
+  Terminal 2 : python predict.py
+        │
+        │ ①  os.getenv('MODEL_URI')  →  lit le shell  →  'models:/m-5e2767…'
+        │
+        │ ②  load_model('models:/m-5e2767…')
+        │       « models: » n'est pas une adresse → il faut résoudre
+        ▼
+  ┌───────────────────────┐
+  │ mlflow server  :5000  │ ③  « où est rangé m-5e2767… ? »
+  │                       │ ④  ← "/workspaces/…/artifacts/1/…/"
+  └───────────────────────┘
+        │
+        │ ⑤  predict.py ouvre ce chemin LUI-MÊME, sur le disque
+        │     (même machine, même filesystem → ça marche tout seul)
+        ▼
+   modèle désérialisé (skops) → en RAM dans le processus python
+        │
+        ▼
+   ⑥  Flask démarre et écoute sur 0.0.0.0:9696
+```
+
+**Le point de l'étape ⑤** : le serveur MLflow ne t'envoie pas le modèle. Il t'envoie **une adresse**, et c'est ton propre processus qui va ensuite lire les fichiers. Ici ça passe inaperçu — même machine, même disque. Au setup 3, c'est ce qui casse.
+
+#### Phase B — à chaque requête
+
+```
+  Terminal 3               loopback              Terminal 2
+  test.py  ──── POST ────► 127.0.0.1:9696 ────►  Flask
+           ◄─── JSON ────                        └─ predict() sur le modèle en RAM
+
+   MLflow n'est PLUS sollicité.  ✗ ── pas d'appel au 5000 ──
+```
+
+> Ici, `--host 127.0.0.1` suffirait encore : tout le monde est sur la même machine, tout passe par la boucle locale. Le schéma montre quand même `0.0.0.0`, parce que c'est ce que le §3 te recommande de taper dès le départ — au setup 3, tu n'auras plus le choix.
+
+---
+
+### Setup 2 — Flask + gunicorn, sans Docker
+
+**Une seule chose change : le serveur HTTP.** Ton code Flask, le chargement du modèle, MLflow, `test.py` : identiques.
+
+#### Où vivent les choses
+
+```
+╔══════════════════════════ CODESPACE (une seule machine) ══════════════════════════╗
+║                                                                                   ║
+║   Terminal 1                    Terminal 2                    Terminal 3          ║
+║  ┌───────────────────┐        ┌──────────────────────┐      ┌──────────────────┐  ║
+║  │ mlflow server     │        │ export MODEL_URI=…   │      │ python test.py   │  ║
+║  │ écoute :5000      │        │ gunicorn             │      │ POST vers        │  ║
+║  │                   │        │  --bind=0.0.0.0:9696 │      │ localhost:9696   │  ║
+║  │                   │        │  predict:app         │      │                  │  ║
+║  └───────────────────┘        └──────────────────────┘      └──────────────────┘  ║
+║                                                                                   ║
+║  ┌─ le disque du Codespace ─────────────── strictement inchangé / setup 1 ───┐    ║
+║  │  mlflow.db                    → les métadonnées (où est rangé quoi)       │    ║
+║  │  artifacts/1/…/model.skops    → les fichiers du modèle                    │    ║
+║  └───────────────────────────────────────────────────────────────────────────┘    ║
+╚═══════════════════════════════════════════════════════════════════════════════════╝
+```
+
+#### Phase A — au démarrage : ce que fait `predict:app`
+
+```
+  gunicorn  ──① importe le module `predict` ────────────────────────┐
+                                                                    ▼
+                                              predict.py s'exécute de haut en bas
+                                              ├─ os.getenv(...)
+                                              ├─ load_model(...)   ← même phase A
+                                              │                      qu'au setup 1
+                                              ├─ app = Flask(...)
+                                              └─ if __name__ == "__main__":
+                                                     ✗ NE S'EXÉCUTE PAS
+                                                     (__name__ vaut "predict")
+                                                                    │
+  gunicorn  ◄─② récupère l'objet `app` ─────────────────────────────┘
+        │
+        ▼
+  ③ gunicorn ouvre lui-même la socket 0.0.0.0:9696 et gère le réseau
+```
+
+C'est le seul endroit du chapitre où la garde `if __name__ == "__main__"` a un effet visible : elle éteint le serveur de dev pendant que gunicorn prend la main, **sans qu'une ligne de code change**.
+
+#### Phase B — à chaque requête
+
+```
+  test.py ──POST──► 127.0.0.1:9696 ──► gunicorn (processus maître)
+                                              │  lie le port, surveille
+                                              │  les workers
+                                    ┌─────────┴──────────────────────┐
+                                    │ worker 1 : app Flask           │
+                                    │            + SA copie du modèle│
+                                    │ worker 2 : app Flask           │
+                                    │            + SA copie du modèle│
+                                    └────────────────────────────────┘
+```
+
+Le maître ne traite aucune requête : il lie le port une fois, puis surveille les workers. Ceux-ci héritent de la même socket et y font `accept()` eux-mêmes — la répartition est faite par le noyau, pas par le maître. Et **chaque worker importe `predict.py` de son côté**, donc chacun refait la phase A et charge sa propre copie du modèle en mémoire. Quatre workers = quatre fois la taille du modèle en RAM. C'est ce qui fait que `--workers` n'est pas un curseur qu'on pousse au maximum.
+
+**Le point à retenir** : `test.py` n'a pas bougé d'une ligne. Il parle à un port ; ce qu'il y a derrière ne le regarde pas.
+
+---
+
+### Setup 3 — Docker
+
+Ici deux mondes apparaissent, avec **deux systèmes de fichiers** et **deux piles réseau**. C'est toute la difficulté de l'étape, et tout ce qui la rend instructive.
+
+#### Où vivent les choses
+
+```
+╔═══════════════════════════════ CODESPACE — L'HÔTE ═══════════════════════════════╗
+║                                                                                  ║
+║   ┌─ Terminal 1 ─────────────────┐      ┌─ Terminal 3 ─────────────────┐         ║
+║   │ mlflow server                │      │ python test.py               │         ║
+║   │   --host 0.0.0.0             │      │ POST http://localhost:9696   │         ║
+║   │   --port 5000                │      └──────────────────────────────┘         ║
+║   └──────────────────────────────┘                                               ║
+║                                                                                  ║
+║   ┌─ disque de l'hôte ───────────────────────────────────────────────────┐       ║
+║   │ mlflow.db                   ← lu par le SERVEUR, jamais par le       │       ║
+║   │                               conteneur. NON monté.                  │       ║
+║   │ /workspaces/…/artifacts/1/…/model.skops                              │       ║
+║   │                             ← greffé dans le conteneur par (2)       │       ║
+║   └──────────────────────────────────────────────────────────────────────┘       ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+        ▲ (1)                  ▲ (2)                            ▲ (3)
+        │ host.docker          │ -v : artifacts/ ci-dessus est  │ -p 9696:9696
+        │ .internal:5000       │   greffé AU MÊME CHEMIN        │   tunnel de port
+        │   → le 5000 ci-dessus│   dans le conteneur            │
+        │                      │                                │
+┌ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ LE CONTENEUR ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ┐
+        │                      │                                │
+│  ┌────┴──────────────────────┴────┐          ┌────────────────┴─────────────┐ │
+   │ predict.py                     │          │ gunicorn                     │  
+│  │  MLFLOW_TRACKING_URI → (1)     │ ◄── importé par ─┐                      │ │
+   │  MODEL_URI (via -e)            │          │  --bind=0.0.0.0:9696         │  
+│  │  ouvre /workspaces/… → (2)     │          │  predict:app  ◄──────────────┘ │
+   └────────────────────────────────┘          └──────────────────────────────┘  
+│                                                                               │
+   ┌─ système de fichiers du conteneur ──────────────────────────────────────┐   
+│  │ /app/predict.py                                                         │  │
+   │ /usr/local/lib/python3.11/…   (les paquets du Pipfile.lock)             │   
+│  │ /workspaces/…/artifacts       ← n'existe QUE grâce au -v                │  │
+   └─────────────────────────────────────────────────────────────────────────┘   
+└ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+```
+
+#### Ce que chaque drapeau installe, AVANT que Python démarre
+
+C'est l'ordre qu'on rate le plus souvent : **Docker prépare le décor, ensuite seulement le programme s'exécute.**
+
+```
+docker run
+  -e MODEL_URI='models:/m-5e2767…'      → pose la variable dans l'env du conteneur
+  -e MLFLOW_TRACKING_URI='http://host.docker.internal:5000'
+                                         → idem
+  --add-host=host.docker.internal:host-gateway
+                                         → écrit une ligne dans le /etc/hosts
+                                           du conteneur : ce nom → l'hôte
+  -v /workspaces/…/artifacts:/workspaces/…/artifacts:ro
+                                         → greffe le dossier de l'hôte dans le
+                                           FS du conteneur, AU MÊME CHEMIN
+  -p 9696:9696                           → tunnel : 9696 de l'hôte → 9696 du conteneur
+
+  ↓ seulement ENSUITE, l'ENTRYPOINT s'exécute
+  gunicorn --bind=0.0.0.0:9696 predict:app
+```
+
+**Deux confusions à éviter, tant qu'elles sont fraîches :**
+
+- **`-p` n'appartient pas à gunicorn.** C'est un drapeau de `docker run`. Gunicorn écoute sur le 9696 *de son conteneur* et ignore totalement l'existence du tunnel.
+- **`predict.py` ne « va pas chercher le modèle via le `-v` ».** Le `-v` a fini son travail avant le démarrage : il a rendu un chemin de l'hôte valide dans le conteneur. `predict.py` ouvre ensuite un fichier ordinaire, sans savoir qu'un volume existe.
+
+#### Phase A — au démarrage
+
+```
+  ENTRYPOINT → gunicorn → importe predict.py
+        │
+        │ ①  os.getenv('MLFLOW_TRACKING_URI') → 'http://host.docker.internal:5000'
+        │    os.getenv('MODEL_URI')           → 'models:/m-5e2767…'
+        │
+        │ ②  load_model('models:/m-5e2767…')  → il faut résoudre
+        ▼
+   host.docker.internal ═══ franchit la frontière conteneur→hôte ═══►
+        ▼
+  ┌──────────────────────────┐
+  │ mlflow server :5000      │  ③ « où est m-5e2767… ? »
+  │ (accepte parce que       │  ④ ← "/workspaces/…/artifacts/1/…"
+  │  --host 0.0.0.0)         │
+  └──────────────────────────┘
+        │
+        │ ⑤  predict.py ouvre /workspaces/…/artifacts/1/…/model.skops
+        │       ┌─────────────────────────────────────────────────┐
+        │       │ Pour lui c'est un fichier local ordinaire.      │
+        │       │ Il ne sait pas qu'un volume existe.             │
+        │       │ C'est le -v qui a rendu ce chemin valide ICI.   │
+        │       └─────────────────────────────────────────────────┘
+        ▼
+   modèle en RAM, dans le processus du conteneur
+        │
+        ▼
+   ⑥  gunicorn écoute 0.0.0.0:9696 (dans le conteneur)
+```
+
+Compare avec la phase A du setup 1 : **les six étapes sont les mêmes.** Seuls deux détails changent — ③ passe par un nom d'hôte au lieu de la loopback, et ⑤ lit un chemin qui n'existe que grâce au `-v`. Toute la difficulté de Docker tient dans ces deux endroits.
+
+#### Phase B — à chaque requête
+
+```
+  Terminal 3 (hôte)          Docker              CONTENEUR
+  ┌──────────┐           ┌──────────┐         ┌─────────────────────────┐
+  │ test.py  │──POST────►│   -p     │────────►│ gunicorn 0.0.0.0:9696   │
+  │          │  :9696    │9696:9696 │  :9696  │      │                  │
+  │          │◄──JSON────│          │◄────────│  app Flask → predict()  │
+  └──────────┘           └──────────┘         │      └─ modèle en RAM   │
+                                              └─────────────────────────┘
+
+  Ni MLflow ni le volume ne sont sollicités.
+```
+
+#### Pourquoi `0.0.0.0` est indispensable des **deux** côtés
+
+```
+  MLflow --host 127.0.0.1 ?  →  la requête du conteneur arrive par l'interface
+                                docker0, pas par la loopback  →  REFUSÉE
+
+  gunicorn --bind 127.0.0.1 ? →  il n'écoute que le trafic interne au conteneur ;
+                                 le -p redirige vers une socket où personne n'écoute
+                                 →  Connection refused
+```
+
+Les deux pannes se ressemblent sans donner le même message : un refus franc (`Connection refused`) côté MLflow, souvent un `Connection reset by peer` ou un `Empty reply from server` côté `-p` — parce que le proxy Docker accepte la connexion puis échoue à joindre l'application.
+
+Le critère fiable n'est pas le message, c'est **le moment** :
+
+| Quand ça casse | Cause | Où regarder |
+|---|---|---|
+| le conteneur **ne démarre pas** | il n'a pas pu charger le modèle | MLflow : `--host`, `--add-host`, `-v` (les deux obstacles du §13) |
+| il démarre, mais `test.py` échoue | le service est injoignable de l'extérieur | le `--bind` de gunicorn et le `-p` — un troisième problème, distinct des deux obstacles du §13 |
+
+---
+
+### Ce qui change entre les trois
+
+| | Setup 1 (Flask) | Setup 2 (+ gunicorn) | Setup 3 (Docker) |
+|---|---|---|---|
+| Serveur HTTP | Werkzeug (dev) | gunicorn | gunicorn |
+| Qui exécute `predict.py` | Python directement | gunicorn (import) | gunicorn (import), dans le conteneur |
+| `if __name__ == "__main__"` | **s'exécute** | ignoré | ignoré |
+| Environnement Python | conda `mlopszoomcamp` | conda `mlopszoomcamp` | celui de l'image, depuis `Pipfile.lock` |
+| Systèmes de fichiers | 1 | 1 | **2** (hôte + conteneur) |
+| Piles réseau | 1 | 1 | **2** |
+| Comment `MODEL_URI` arrive | `export` dans le shell | `export` dans le shell | `-e` au `docker run` |
+| Accès au dossier `artifacts/` | direct | direct | **via `-v`** |
+| Joindre MLflow | `127.0.0.1:5000` | `127.0.0.1:5000` | **`host.docker.internal:5000`** |
+| `--host` de MLflow | `127.0.0.1` suffit | `127.0.0.1` suffit | **`0.0.0.0` obligatoire** |
+| Exposer le 9696 | rien à faire | rien à faire | **`-p 9696:9696`** |
+| Phase A (démarrage) | 6 étapes | 6 étapes (+ import) | 6 étapes (+ 2 frontières) |
+| Phase B (requête) | identique | identique | identique |
+| `test.py` | inchangé | inchangé | **inchangé** |
+
+Les trois dernières lignes sont le fil rouge du chapitre : trois architectures internes radicalement différentes, **un seul contrat** — `POST http://localhost:9696/predict`.
+
+---
+
+## 16. Récapitulatif : environnements, shells, terminaux, ports
 
 ### Les environnements en jeu
 
 | Environnement | Rôle | Python | Contient |
 |---|---|---|---|
 | `mlopszoomcamp` (conda) | ton atelier : notebooks, MLflow, exploration | 3.11.16 | sklearn 1.9.0, mlflow 3.16.0, pandas, jupyter, requests |
-| pipenv du dossier | le service à livrer | 3.11.16 | sklearn 1.9.0, mlflow 3.16.0, flask, gunicorn |
+| pipenv du dossier | le service à livrer | 3.11.16 | sklearn 1.9.0, mlflow 3.16.0, skops 0.14.0, flask, gunicorn |
 | dans l'image Docker | le service livré | 3.11 (image de base) | installé depuis `Pipfile.lock`, sans virtualenv |
 
 Ils ne sont **pas imbriqués**, ils sont côte à côte. Le virtualenv pipenv ne voit aucun paquet de conda.
@@ -1196,7 +1676,8 @@ Ton environnement conda est **totalement invisible** depuis l'intérieur du cont
 | `python predict.py` (hors Docker) | **`mlopszoomcamp`** | a besoin de mlflow, sklearn, flask |
 | `gunicorn … predict:app` (hors Docker) | **`mlopszoomcamp`** | idem |
 | `python test.py` | **`mlopszoomcamp`** | a besoin de `requests` |
-| `pipenv install` | **`mlopszoomcamp`** | pour que `--python=3.11.16` trouve le bon interpréteur |
+| `pipenv install` | **`mlopszoomcamp`** | pour que `--python=3.11` trouve le bon interpréteur |
+| `pipenv run gunicorn …` | **pipenv du dossier** | valider le lock avant Docker (§9) |
 | `docker build` | **peu importe** | Docker est un binaire système |
 | `docker run` | **peu importe** | idem |
 | `curl`, `lsof`, `kill` | **peu importe** | outils système |
@@ -1216,7 +1697,7 @@ Et garde le réflexe de **lire ton prompt** : `(base)` ou `(mlopszoomcamp)` en d
 | 5000 | `mlflow server` | Codespace ; et depuis le conteneur si `--host 0.0.0.0` |
 | 9696 | le service de prédiction | Codespace ; et depuis l'extérieur du conteneur si `-p` **et** `--bind 0.0.0.0` |
 
-**Un port n'accepte qu'un seul processus.** D'où `Address already in use` quand on oublie d'arrêter le précédent.
+**Un port ne peut être lié qu'une seule fois.** D'où `Address already in use` quand on oublie d'arrêter le précédent.
 
 ### `0.0.0.0` vs `127.0.0.1` — le tableau à retenir
 
@@ -1225,17 +1706,18 @@ Et garde le réflexe de **lire ton prompt** : `(base)` ou `(mlopszoomcamp)` en d
 | Côté **serveur** (`--host`, `--bind`) | n'accepte que les connexions locales | accepte toutes les interfaces |
 | Côté **client** (une URL) | « la machine d'où je parle » | **jamais utilisé** — ce n'est pas une destination |
 
-Les trois occurrences dans ce module :
+Les **quatre** occurrences rencontrées jusqu'ici :
 
 1. Le tunnel SSH du module 2
-2. `mlflow server --host` — sinon le conteneur est refusé
-3. `gunicorn --bind` — sinon le `-p` ne sert à rien
+2. `mlflow server --host` (§3) — sinon le conteneur est refusé
+3. `set_tracking_uri("http://127.0.0.1:5000")` dans `predict.py` (§10) — le conteneur a son propre 127.0.0.1
+4. `gunicorn --bind` (§11) — sinon le `-p` ne sert à rien
 
 **`localhost` est toujours relatif à qui parle.** Si tu ne retiens qu'une phrase de tout ce document, que ce soit celle-là.
 
 ---
 
-## 16. Différences avec le setup `web-service`
+## 17. Différences avec le setup `web-service`
 
 | | `web-service` | `web-service-mlflow` |
 |---|---|---|
@@ -1249,7 +1731,7 @@ Les trois occurrences dans ce module :
 | **scikit-learn** | `==1.0.2` (imposé par le pickle du cours) | `==1.9.0` (celui qui a entraîné) |
 | **Contraintes supplémentaires** | `numpy<2` (ABI de sklearn 1.0.2) | aucune |
 | **Pourquoi un pipenv** | l'environnement de dev ≠ l'environnement du pickle | uniquement pour Docker |
-| **`[dev-packages]`** | `requests` (pour `test.py`) | — |
+| **`[dev-packages]`** | `requests` (pour `test.py`) | — (vide dans le dépôt ; `requests` à ajouter, voir §9) |
 | **Image de base** | `python:3.10.21-slim` | `python:3.11-slim` |
 | **`COPY` du code** | `predict.py` **et** `lin_reg.bin` | `predict.py` seul — le modèle n'est plus dans l'image |
 | **`.dockerignore`** | absent | présent |
@@ -1281,16 +1763,18 @@ Chaque couche répond à une question de la forme « *et si l'environnement d'ex
 
 ---
 
-## 17. Dépannage
+## 18. Dépannage
 
 | Symptôme | Piste |
 |---|---|
-| `ConnectionRefusedError` sur `test.py` | le service ne tourne pas, ou pas sur 9696 |
+| `[Errno 111] Connection refused` sur `test.py` | le service ne tourne pas, ou pas sur 9696 |
+| `RuntimeError: MODEL_URI n'est pas définie` — ou, sans la garde du §4, une traceback MLflow parlant d'URI invalide / `NoneType` au démarrage | **`MODEL_URI` non exportée dans ce terminal** → `echo $MODEL_URI` |
 | `Connection refused` au démarrage du conteneur | MLflow éteint, lancé sur `--host 127.0.0.1`, ou `MLFLOW_TRACKING_URI` mal formé |
 | `FileNotFoundError` sur `/workspaces/…` depuis le conteneur | le `-v` manque, ou les deux chemins diffèrent |
 | Erreur de dépicklage / `InconsistentVersionWarning` | versions du `Pipfile` ≠ versions d'entraînement |
 | `--deploy` échoue au build | `Pipfile` et `Pipfile.lock` désynchronisés → `pipenv lock` ; ou version Python de l'image ≠ `[requires]` |
 | `OSError: Address already in use` | un serveur tourne déjà sur ce port → `lsof -i :9696` puis `kill` |
+| `[CRITICAL] WORKER TIMEOUT` en boucle au démarrage de gunicorn | le chargement du modèle dépasse les 30 s par défaut → `--timeout 120` ou `--preload` (§7) |
 | `docker build … requires 1 argument` | le `.` du contexte est oublié |
 | `TypeError: Object of type float64 is not JSON serializable` | il manque le `float()` autour de `preds[0]` |
 | Le code modifié n'a aucun effet | fichier non sauvegardé (`●` dans l'onglet VS Code), ou image non reconstruite |
@@ -1330,7 +1814,7 @@ docker ps              # quels conteneurs tournent ?
 
 ---
 
-## 18. Cheat sheet des commandes
+## 19. Cheat sheet des commandes
 
 ### Le parcours complet
 
@@ -1351,7 +1835,7 @@ python -c "import sys, sklearn, mlflow; print(sys.version.split()[0], sklearn.__
 
 # ═══ Créer le pipenv (une seule fois) ═══
 rm -f Pipfile Pipfile.lock
-pipenv install --python=3.11.16 scikit-learn==1.9.0 mlflow==3.16.0 flask gunicorn
+pipenv install --python=3.11 scikit-learn==1.9.0 mlflow==3.16.0 skops==0.14.0 flask gunicorn
 
 # ═══ Terminal 2 : le service ═══
 conda activate mlopszoomcamp
@@ -1361,14 +1845,15 @@ echo $MODEL_URI
 python predict.py                                  # (a) serveur de dev Flask
 gunicorn --bind=0.0.0.0:9696 predict:app           # (b) serveur de production
 
-# (c) Docker
+# (c) Docker  — le « . » final est le contexte, donc le cd compte
+cd /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow
 docker build -t ride-duration-prediction-service:v2 .
 docker run -it --rm \
   -p 9696:9696 \
   --add-host=host.docker.internal:host-gateway \
   -e MLFLOW_TRACKING_URI='http://host.docker.internal:5000' \
   -e MODEL_URI='models:/m-5e276730f7004842b7c3a36ea11b5044' \
-  -v /workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:/workspaces/mlops-zoomcamp/04-deployment/web-service-mlflow/artifacts:ro \
+  -v "$PWD/artifacts:$PWD/artifacts:ro" \
   ride-duration-prediction-service:v2
 
 # ═══ Terminal 3 : tester — identique dans les 3 cas ═══
@@ -1380,10 +1865,11 @@ python test.py
 
 | Commande | Effet |
 |---|---|
-| `pipenv install` | reconstruit l'env depuis le `Pipfile.lock` (sans argument = pas d'ajout) |
+| `pipenv install` | installe depuis le `Pipfile.lock` **si** il est cohérent avec le `Pipfile` ; sinon **re-résout** d'abord — et peut donc changer des versions sans te le dire |
+| `pipenv sync` | installe **strictement** ce que dit le `Pipfile.lock`, sans jamais re-résoudre. Le bon réflexe sur un projet qu'on reprend |
 | `pipenv install --dev` | idem + les `[dev-packages]` |
 | `pipenv install <paquet>` | ajoute au Pipfile et re-résout le lock |
-| `pipenv install --python=3.11.16` | impose l'interpréteur (le **trouve**, ne l'installe pas) |
+| `pipenv install --python=3.11` | impose l'interpréteur (le **trouve**, ne l'installe pas) |
 | `pipenv lock` | régénère le lock depuis le Pipfile. **Jamais anodin sur un projet ancien** |
 | `pipenv run <commande>` | exécute dans l'env, sans sous-shell. **À privilégier** |
 | `pipenv shell` | lance un sous-shell. Conda peut s'y réinviter |
@@ -1426,7 +1912,7 @@ curl http://127.0.0.1:5000                       # MLflow répond-il ?
 ## Ce qu'il faut retenir en trois phrases
 
 1. **Le client ne change jamais.** `test.py` interroge une URL et un port ; ce qu'il y a derrière — Flask, gunicorn, un conteneur — ne le regarde pas. C'est ça, une interface.
-2. **`localhost` est toujours relatif à qui parle.** Trois pannes de ce module viennent de là, et tu en recroiseras d'autres.
+2. **`localhost` est toujours relatif à qui parle.** Quatre pannes de ce seul module viennent de là, et tu en recroiseras d'autres.
 3. **Ce qui dépend de l'endroit où le code tourne doit sortir du code.** Adresses, chemins, identifiants de modèle : dans l'environnement, pas dans le fichier.
 
 ---
