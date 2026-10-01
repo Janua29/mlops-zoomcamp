@@ -285,3 +285,97 @@ Il y a seulement deux contraintes à respecter :
 
 * **Les contraintes AWS :** Le nom doit comporter entre 1 et 128 caractères (lettres, chiffres, tirets `-`, *underscores* `_` et points `.`).
 * **La cohérence :** Le nom avec lequel tu créées le stream sur AWS (`aws kinesis create-stream --stream-name ...`) doit être **strictement identique** à celui que tu passes dans ta variable d'environnement (`PREDICTIONS_STREAM_NAME`).
+
+
+## Question
+
+**Question**
+
+C'est kinesis qui transforme cela :
+
+```json
+data '{        "ride": {            "PULocationID": 130,            "DOLocationID": 205,            "trip_distance": 3.66        },         "ride_id": 156
+```
+
+en 
+
+```json
+{
+    "Records": [
+        {
+            "kinesis": {
+                "kinesisSchemaVersion": "1.0",
+                "partitionKey": "1",
+                "sequenceNumber": "49630081666084879290581185630324770398608704880802529282",
+                "data": "ewogICAgICAgICJyaWRlIjogewogICAgICAgICAgICAiUFVMb2NhdGlvbklEIjogMTMwLAogICAgICAgICAgICAiRE9Mb2NhdGlvbklEIjogMjA1LAogICAgICAgICAgICAidHJpcF9kaXN0YW5jZSI6IDMuNjYKICAgICAgICB9LCAKICAgICAgICAicmlkZV9pZCI6IDI1NgogICAgfQ==",
+                "approximateArrivalTimestamp": 1654161514.132
+            },
+            "eventSource": "aws:kinesis",
+            "eventVersion": "1.0",
+            "eventID": "shardId-000000000000:49630081666084879290581185630324770398608704880802529282",
+            "eventName": "aws:kinesis:record",
+            "invokeIdentityArn": "arn:aws:iam::XXXXXXXXX:role/lambda-kinesis-role",
+            "awsRegion": "eu-west-1",
+            "eventSourceARN": "arn:aws:kinesis:eu-west-1:XXXXXXXXX:stream/ride_events"
+        }
+    ]
+}
+```
+
+?
+
+Si c'est le cas , comment l'instructeur a-t-il pu écrire lui même "records" ? Il y a de nombreux identifiants...
+
+**Gemini answer**
+
+**Oui, c'est exactement ça.** C'est l'infrastructure d'AWS qui génère automatiquement toute cette enveloppe JSON lorsqu'elle déclenche ta fonction Lambda.
+
+---
+
+### 1. Que se passe-t-il en production ?
+
+* **De ton côté (Producteur) :** Tu envoies uniquement tes données métier avec `put-record` :
+```json
+{"ride": {"PULocationID": 130, "DOLocationID": 205, "trip_distance": 3.66}, "ride_id": 156}
+
+```
+
+
+* **Du côté d'AWS (L'intégration Kinesis $\rightarrow$ Lambda) :**
+1. Kinesis reçoit ta donnée et l'encode en **Base64** (`"ewogICAg..."`).
+2. AWS crée une enveloppe autour de ce message et l'ajoute dans une liste appelée `"Records"`.
+3. AWS enrichit cet objet avec des métadonnées système (horodatage, numéro de séquence, région AWS, ARN du stream).
+4. AWS transmet ce gros dictionnaire JSON complet à l'argument `event` de ta fonction `lambda_handler(event, context)`.
+
+
+
+---
+
+### 2. Comment l'instructeur a-t-il pu écrire ce JSON dans les tests ?
+
+L'instructeur n'a **pas inventé** ces identifiants complexes (`sequenceNumber`, `eventID`, `invokeIdentityArn`, etc.) à la main.
+
+Il a combiné trois techniques standards :
+
+1. **Copier-coller depuis AWS CloudWatch :**
+Lors du développement, il suffit de faire un simple `print(event)` au début de la fonction Lambda sur AWS. AWS enregistre ce `print` dans son service de logs (CloudWatch). L'instructeur a simplement ouvert les logs, **copié l'événement réel généré par AWS**, et l'a collé dans son fichier de test local.
+2. **Utilisation des modèles officiels d'AWS :**
+AWS fournit dans sa documentation et ses outils de développement (comme *AWS SAM CLI* ou l'extension VS Code d'AWS) des **templates JSON d'exemples** pour chaque service (Kinesis, S3, DynamoDB, etc.).
+3. **Encodage manuel du payload :**
+Une fois le squelette de l'événement récupéré, l'instructeur a juste remplacé la valeur de la clé `"data"` par la version Base64 de son propre objet de test (`"ride_id": 156`).
+
+---
+
+### 3. Pourquoi garder tous ces identifiants dans un test local ?
+
+Ton code Python (`lambda_function.py`) n'a besoin que du champ `data` pour faire sa prédiction. Cependant, garder l'enveloppe complète `"Records": [...]` présente un avantage majeur :
+
+* **Garantir la compatibilité :** Si ton code `lambda_function.py` commence par faire :
+```python
+for record in event['Records']:
+    encoded_data = record['kinesis']['data']
+
+```
+
+
+Ton test local doit posséder **exactement la même structure de clés** (`event['Records'][0]['kinesis']['data']`), sinon Python lèvera immédiatement une erreur `KeyError`. Les identifiants comme `sequenceNumber` ou `awsRegion` ne servent qu'à faire de la "figuration" pour que le mock soit un double parfait de la réalité.
