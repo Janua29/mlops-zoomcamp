@@ -1,8 +1,9 @@
-# Module 06 — Best Practices : comprendre et suivre le chapitre
+# Module 06 — Best Practices : comprendre et suivre le chapitre (v2)
 
 > Sources : [DataTalksClub/mlops-zoomcamp › 06-best-practices](https://github.com/DataTalksClub/mlops-zoomcamp/tree/main/06-best-practices) · ton fork [Janua29/mlops-zoomcamp › 06-best-practices](https://github.com/Janua29/mlops-zoomcamp/tree/main/06-best-practices) (le dossier `code/` est identique à l'original).
 > Contexte : tout tourne dans ton **Codespace** (VS Code desktop sur le Mac, connecté à la machine Linux distante).
 > État au 27/09/2026. Ce qui a été **testé** pour écrire ce cours : installation `pipenv` des dépendances, tests unitaires, isort/black/pylint, hooks pre-commit, chargement du modèle MLflow. **Non testé** : les images Docker (Lambda, LocalStack) et toute la partie AWS/Terraform — voir §9.
+> **v2 (28/09/2026)** : ajout du §3.0 (notions de base : serveur, port, HTTP, Lambda, Kinesis, callback, RIE), de la définition du flux `ride_predictions` (§5.3) et d'un récit pas à pas après chaque schéma du §5. Cours compagnon : `cours-06-model-et-lambda-function.md` (le code de `model.py` et `lambda_function.py` en détail).
 > Les commentaires `# …` ajoutés dans les extraits de fichiers sont des **annotations de cours** : ne recopie pas les extraits, modifie les fichiers d'origine.
 
 ---
@@ -102,7 +103,7 @@ ls -l "$(pipenv --venv)/bin/python"       # le lien vers le python3.9 de conda
 
 Jusqu'ici, le cours a produit un modèle qui marche (modules 1-4) et un moyen de le surveiller (module 5). Le module 6 répond à une autre question : **comment modifier ce code sans le casser, et le déployer de façon reproductible ?**
 
-On reprend le **service de prédiction en streaming du module 4** (une fonction AWS Lambda qui lit des courses dans un flux Kinesis et écrit des prédictions de durée dans un autre flux) et on l'entoure de « bonnes pratiques » d'ingénierie logicielle.
+On reprend le **service de prédiction en streaming du module 4** (une fonction AWS Lambda qui lit des courses dans un flux Kinesis et écrit des prédictions de durée dans un autre flux ; ces notions sont expliquées au §3.0) et on l'entoure de « bonnes pratiques » d'ingénierie logicielle.
 
 ### 1.2 La progression : deux blocs
 
@@ -222,16 +223,102 @@ def lambda_handler(event, context):      # exécuté à CHAQUE invocation
 
 ## 3. Les outils et services
 
+### 3.0 Les notions de base : serveur, port, HTTP, Lambda, Kinesis, callback, RIE
+
+Tout le module repose sur des programmes qui **s'envoient des messages**. Avant les outils, le vocabulaire.
+
+#### Serveur, client, port
+
+- Un **serveur** est un programme qui **attend** des demandes et **y répond**. Un **client** est un programme qui envoie une demande. (Le mot « serveur » désigne parfois aussi la *machine* qui fait tourner ces programmes : ici, on parle du programme.)
+- Un **port** est un numéro (de 0 à 65535) qui distingue les serveurs d'une même machine. L'adresse complète d'un serveur est donc `machine:port`, par exemple `localhost:8080` (`localhost` = « la machine où je suis »).
+- Analogie : la machine est un bâtiment, chaque serveur est un guichet, le port est le numéro du guichet.
+
+#### Protocole et HTTP
+
+Un **protocole** est la **langue** que parlent le client et le serveur. **HTTP** est la plus répandue. Une conversation HTTP est toujours un aller-retour : une **requête**, puis une **réponse**.
+
+| Partie | Requête (client → serveur) | Réponse (serveur → client) |
+|---|---|---|
+| Première ligne | Une **méthode** et un **chemin** : `GET /page` (« donne-moi »), `POST /…` (« voici des données, traite-les ») | Un **code de statut** : `200 OK`, `404 Not Found`, `500 Internal Server Error` |
+| En-têtes | Informations annexes, ex. `Content-Type: application/json` | Idem |
+| Corps | Les données envoyées (souvent du JSON) — facultatif | Les données renvoyées |
+
+Exemple du module : ce que `test_docker.py` envoie, et la réponse attendue (reconstituée à partir du code et du modèle, le conteneur n'ayant pas été lancé pour écrire ce cours, §9).
+
+```
+POST /2015-03-31/functions/function/invocations HTTP/1.1     ← méthode + chemin (imposé par l'API Lambda ;
+                                                                2015-03-31 = version de cette API)
+Host: localhost:8080                                         ← à quel serveur
+Content-Type: application/json                               ← le corps est du JSON
+
+{"Records": [{"kinesis": {"data": "ewogICAg..."}}]}          ← corps : la course (event.json)
+```
+
+```
+HTTP/1.1 200 OK                                              ← « tout s'est bien passé »
+
+{"predictions": [{"model": "ride_duration_prediction_model", "version": "Test123",
+                  "prediction": {"ride_duration": 21.29, "ride_id": 256}}]}
+```
+
+**HTTPS** = HTTP **chiffré**, sur le port 443 par défaut. Les outils AWS (AWS CLI, `boto3`, Terraform) parlent aux API d'AWS en HTTPS par défaut.
+
+**base64** : une façon d'écrire n'importe quels octets avec seulement des lettres, des chiffres, `+` et `/`. Le JSON ne transporte que du texte ; quand Kinesis livre un message dans un JSON (à Lambda, ou dans `event.json`), il l'écrit donc en base64. C'est pourquoi `ewogICAg...` est illisible et doit être **décodé**.
+
+#### Les serveurs que tu as déjà utilisés
+
+| Serveur | Port | Protocole | Qui lui parle, et pour quoi faire |
+|---|---|---|---|
+| MLflow (`mlflow ui` / `mlflow server`, modules 2-4) | 5000 | HTTP | Ton navigateur, pour afficher l'interface. Avec un *tracking server*, ton code Python aussi : `mlflow.set_tracking_uri("http://…:5000")`, puis chaque `log_metric` est une requête HTTP. (Avec `set_tracking_uri("sqlite:///mlflow.db")`, pas de HTTP : Python écrit directement dans le fichier de base de données.) |
+| Prefect (module 3) | 4200 | HTTP | Navigateur (interface) et tes flows, qui y déclarent leurs exécutions (si `PREFECT_API_URL` pointe vers ce serveur) |
+| Grafana (module 5) | 3000 | HTTP | Ton navigateur |
+| Adminer (module 5) | 8080 | HTTP | Ton navigateur |
+| Evidently UI (module 5) | 8000 | HTTP | Ton navigateur |
+| **PostgreSQL** (module 5) | 5432 | **PostgreSQL** (pas HTTP) | Tes scripts Python (`psycopg`), **Grafana** et Adminer, pour lire et écrire les métriques |
+| RIE (module 6) | 8080 | HTTP | `test_docker.py` |
+| LocalStack (module 6) | 4566 | HTTP | L'AWS CLI, `boto3` |
+| API AWS (module 6, bloc B) | 443 | HTTPS | L'AWS CLI, `boto3`, Terraform (présentés au §3.1 et au §4) |
+
+Grafana illustre bien la différence : il est **serveur HTTP** pour ton navigateur, et en même temps **client PostgreSQL** pour aller chercher les données qu'il affiche.
+
+**Presque tous les serveurs sont-ils HTTP ?** Beaucoup, oui : tous ceux qui ont une interface web ou une API web. HTTP est simple, compris par tous les navigateurs, disponible dans tous les langages, et laissé passer par presque tous les pare-feux. Mais pas tous : les bases de données (PostgreSQL 5432, MySQL 3306, Redis 6379), la connexion à distance (SSH, port 22) ou l'envoi d'e-mails (SMTP, port 25) ont leur propre protocole, souvent plus rapide ou mieux adapté (connexion qui reste ouverte, transactions).
+
+#### Lambda, Kinesis et callback, en bref
+
+Ces trois notions sont détaillées dans le cours compagnon `cours-06-model-et-lambda-function.md` (§2, §3 et §6). L'essentiel :
+
+- **AWS Lambda** : un service AWS qui **exécute ta fonction Python à ta place**, chaque fois qu'un événement arrive. Tu ne lances jamais le programme : AWS appelle `lambda_handler(event, context)`, où `event` contient les données reçues et `context` des informations sur l'exécution (temps restant…), inutilisées ici.
+- **Kinesis** : un **tapis roulant de messages**, identifié par un nom. Un programme y dépose des messages (`put_record`), un autre les récupère (`get_records`), sans se connaître.
+- **Callback** : une fonction qu'on **confie** à un objet pour qu'il l'**appelle plus tard**. Ici, on donne à `ModelService` la fonction « publier dans Kinesis » ; il l'appelle après chaque prédiction, sans savoir ce qu'elle fait.
+
+#### Le RIE : jouer le rôle d'AWS Lambda en local
+
+Sur ton Codespace, il n'y a pas d'AWS pour appeler `lambda_handler`. Le **RIE** (*Runtime Interface Emulator*), inclus dans l'image Docker officielle de Lambda, comble ce vide : c'est un **petit serveur HTTP**, qui attend sur le port 8080 et joue le rôle du service Lambda. Il travaille en duo avec le **client d'exécution Python** de l'image (le programme qui, dans une vraie Lambda aussi, fait le lien entre AWS et ton code) : le RIE reçoit la requête HTTP, le client d'exécution appelle ta fonction.
+
+```
+test_docker.py ──① POST, corps = event.json────► RIE (port 8080)
+                                                   │ ② transmet l'événement au client d'exécution Python,
+                                                   │   qui appelle lambda_handler(event, context)
+                                                   ▼
+                                                 ton code calcule, puis return {...}
+test_docker.py ◄──④ réponse HTTP = ce JSON─────── RIE ◄──③ valeur renvoyée
+```
+
+1. `test_docker.py` envoie un `POST` dont le corps est l'événement (`event.json`).
+2. Le RIE transmet l'événement au client d'exécution Python, qui le transforme en dictionnaire et appelle `lambda_handler(event, context)`, exactement comme dans une vraie Lambda. (Dans la suite du cours, « le RIE appelle `lambda_handler` » résume ce duo.)
+3. Ton code calcule la prédiction et renvoie un dictionnaire.
+4. Le client d'exécution rend ce résultat au RIE, qui le renvoie, en JSON, dans la réponse HTTP.
+
 ### 3.1 Bloc A (local)
 
 | Outil | C'est quoi | Rôle ici |
 |---|---|---|
 | **pytest** | Framework de tests Python. Trouve les fichiers `*_test.py` / `test_*.py`, exécute les fonctions `test_*`, signale chaque `assert` faux. | Tests unitaires de `model.py`. |
 | **Docker** | Emballe une application et tout son environnement dans une **image** ; une image lancée = un **conteneur**. | Construire l'image du service. |
-| **Image Lambda + RIE** | `public.ecr.aws/lambda/python:3.9` est l'image de base officielle d'AWS Lambda. Elle contient le **Runtime Interface Emulator** : un petit serveur HTTP (port 8080) qui imite l'appel de Lambda. | Invoquer la Lambda en local avec un simple `POST`. |
+| **Image Lambda + RIE** | `public.ecr.aws/lambda/python:3.9` est l'image de base officielle d'AWS Lambda. Elle contient le **Runtime Interface Emulator** (RIE) : un petit serveur HTTP (port 8080) qui joue le rôle d'AWS Lambda (§3.0). | Invoquer la Lambda en local avec un simple `POST`. |
 | **docker-compose** | Démarre plusieurs conteneurs décrits dans un fichier YAML, sur un réseau commun. | Service + LocalStack ensemble. |
 | **LocalStack** | Un faux AWS dans un conteneur : mêmes API que Kinesis, S3…, sur `localhost:4566`. | Tester la publication Kinesis sans compte AWS. |
-| **AWS CLI** (`aws`) | Ligne de commande pour piloter AWS. `--endpoint-url` la redirige vers LocalStack. | Créer le flux de test. |
+| **AWS CLI** (`aws`) | Un **programme** installé dans le Codespace (pas le cloud AWS lui-même) : il envoie des requêtes HTTPS à l'API d'AWS et affiche la réponse. `--endpoint-url` le redirige vers LocalStack (en HTTP). | Créer le flux de test. |
 | **isort** | Trie les imports. | Qualité. |
 | **black** | Reformate le code selon un style unique, non négociable. | Qualité. |
 | **pylint** | **Linter** : lit le code sans l'exécuter et signale erreurs et mauvaises pratiques (import inutilisé, nom de variable non conforme…). Note sur 10. | Qualité. |
@@ -283,6 +370,16 @@ Module 5 : `prefect, tqdm, requests, joblib, pyarrow, psycopg, evidently, pandas
 
 ## 5. Architecture IT
 
+**Comment lire les schémas.** Chaque schéma est suivi d'un **récit pas à pas** : qui envoie quoi à qui, sur quelle adresse, qui calcule, et ce qui revient. Les notions de serveur, port et requête HTTP sont au §3.0.
+
+| Symbole | Sens |
+|---|---|
+| `A ──► B` | A **agit** sur B : A envoie une requête à B, ou lance B. La flèche part toujours de celui qui demande. |
+| `A ◄── B` | Ce que B **renvoie** à A (une réponse). |
+| Texte près d'une flèche | L'adresse visée (`localhost:8080`) ou l'action (`interroge`, `put_record`). |
+| `═══` | Un dossier **partagé** entre le Codespace et un conteneur (un *volume*), pas un échange réseau. |
+| ①②③… | Les étapes du récit qui suit le schéma. |
+
 ### 5.1 Vue physique : qui tourne où
 
 ```
@@ -305,7 +402,14 @@ Module 5 : `prefect, tqdm, requests, joblib, pyarrow, psycopg, evidently, pandas
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Retiens : **`localhost` dans ton terminal = le Codespace**, pas ton Mac. VS Code redirige automatiquement les ports ouverts (onglet *Ports*), mais pour les tests du module tu n'en as pas besoin : tout se passe dans le Codespace.
+**Récit.**
+
+1. **Ton Mac n'exécute rien du module.** VS Code desktop n'y fait que de l'affichage : ce que tu tapes part vers le Codespace, ce que le Codespace affiche revient vers ton écran. Ces échanges passent par un **tunnel chiffré** (HTTPS) géré par GitHub.
+2. **Le Codespace exécute tout** : le terminal, Python, pytest, le programme `aws`, make, Terraform, et **Docker Engine**, le logiciel qui fait tourner les conteneurs. Les deux conteneurs du test d'intégration (`backend` et `kinesis`) vivent donc **dans** le Codespace.
+3. **AWS n'est contacté qu'au bloc B**, depuis le Codespace (Terraform, `aws`) : des requêtes HTTPS, port 443, vers les serveurs d'Amazon en Irlande (`eu-west-1`).
+4. **Redirection de ports** (facultatif) : si tu ouvres `localhost:8080` dans le navigateur de ton Mac, VS Code transporte la requête par le tunnel jusqu'au port 8080 du Codespace (onglet *Ports* de VS Code).
+
+Retiens : **`localhost` dans ton terminal = le Codespace**, pas ton Mac. Pour les tests du module, tu n'as pas besoin de la redirection : tout se passe dans le Codespace.
 
 ### 5.2 Niveau 1 — tests unitaires : aucun réseau
 
@@ -314,14 +418,20 @@ pytest ──► tests/model_test.py ──► import model ──► ModelServi
                                                     (pas de Docker, pas d'AWS, pas de fichier modèle)
 ```
 
+**Récit.** `pytest` est un **seul programme Python** qui tourne dans le Codespace. Il importe `model.py`, fabrique un `ModelService` avec le faux modèle `ModelMock(10.0)`, et appelle ses méthodes **directement, en mémoire**. Pas de serveur, pas de requête, pas de conteneur, pas de fichier modèle : c'est pourquoi ces tests prennent moins d'une seconde.
+
 ### 5.3 Niveau 2 — test d'intégration (`run.sh`)
 
 Deux « mondes réseau » coexistent :
 
-- **le Codespace** (hôte), où tournent `run.sh`, `aws`, `test_docker.py`, `test_kinesis.py` ;
-- **le réseau Docker** créé par docker-compose (`integration-test_default`), où les conteneurs se trouvent **par leur nom de service** (`backend`, `kinesis`) grâce au DNS interne de Docker.
+- **le Codespace** (hôte), où tournent `run.sh`, le programme `aws`, `test_docker.py` et `test_kinesis.py` ;
+- **le réseau Docker** créé par docker-compose (`integration-test_default`), où les conteneurs se trouvent **par leur nom de service** (`backend`, `kinesis`) grâce au DNS interne de Docker (un annuaire qui traduit un nom en adresse).
 
-Les **ports publiés** (`"8080:8080"`, `"4566:4566"`) font le pont : `hôte:8080` → `conteneur:8080`.
+En production (§5.4), il y a **deux** flux Kinesis : `ride_events` (les courses qui arrivent) et `ride_predictions` (les prédictions qui repartent). En local, seul le second existe ; le premier est remplacé par `test_docker.py` (explication en fin de section).
+
+> **`aws` n'est pas le cloud AWS.** Ici, `aws` est le nom d'un **programme** : l'AWS CLI (*Command Line Interface*), installé dans le Codespace (§7.1). Il se contente d'envoyer des requêtes HTTP à une API et d'afficher la réponse, comme un navigateur envoie des requêtes à un site. Sans option, il vise les serveurs d'Amazon de la région configurée (ex. `https://kinesis.eu-west-1.amazonaws.com`). Avec `--endpoint-url=http://localhost:4566`, il vise LocalStack : aucun octet ne part chez Amazon. `boto3` fonctionne pareil en Python (`endpoint_url`).
+
+Les **ports publiés**, écrits `"port hôte:port conteneur"` (`"8080:8080"`, `"4566:4566"`), font le pont entre les deux mondes : une requête envoyée à `localhost:8080` depuis le Codespace est transmise au port 8080 du conteneur `backend`.
 
 ```
  CODESPACE (hôte)                     │  RÉSEAU DOCKER « integration-test_default »
@@ -331,9 +441,9 @@ Les **ports publiés** (`"8080:8080"`, `"4566:4566"`) font le pont : `hôte:8080
  ./model (dossier) ═══ volume ════════┼════════════════════════╗
                                       │   ┌─ backend ──────────▼────────────────┐
  ③ test_docker.py                     │   │ RIE :8080 → lambda_handler          │
-   POST localhost:8080/2015-03-31/…  ─┼──►│   1. charge le modèle (/app/model)  │
-                                      │   │   2. prédit                         │
-                                      │   │   3. put_record → kinesis:4566 ──┐  │
+   POST localhost:8080/2015-03-31/…  ─┼──►│   3.3 charge le modèle (/app/model) │
+   ◄── réponse : la prédiction ───────┼───│   3.4 prédit                        │
+                                      │   │   3.5 put_record → kinesis:4566 ─┐  │
                                       │   └──────────────────────────────────┼──┘
                                       │   ┌─ kinesis (LocalStack) ───────────▼──┐
  ② aws kinesis create-stream         ─┼──►│ :4566   flux « ride_predictions »   │
@@ -342,9 +452,74 @@ Les **ports publiés** (`"8080:8080"`, `"4566:4566"`) font le pont : `hôte:8080
    (→ localhost:4566)                 │   └─────────────────────────────────────┘
 ```
 
+#### Récit pas à pas
+
+Seuls deux conteneurs tournent : `backend` (ton service de prédiction) et `kinesis` (LocalStack, le faux AWS).
+
+**Étape 1 — `docker-compose up -d` : démarrer**
+
+- Docker démarre les deux conteneurs sur le réseau privé `integration-test_default`.
+- Dans `backend`, le RIE se met à **attendre** sur le port 8080. Le dossier `integration-test/model/` du dépôt (un modèle MLflow déjà entraîné, fourni avec le cours : `MLmodel`, `model.pkl`…) y apparaît sous `/app/model` : c'est le **volume**.
+- Le conteneur reçoit aussi ses **variables d'environnement** : des paires nom=valeur, écrites dans `docker-compose.yaml` (§6.7), que le code lit avec `os.getenv`. Ce sont elles qui adaptent le code au test :
+
+  | Variable | Valeur | Effet dans le code |
+  |---|---|---|
+  | `PREDICTIONS_STREAM_NAME` | `ride_predictions` | Nom du flux où publier |
+  | `MODEL_LOCATION` | `/app/model` | Charger le modèle depuis ce dossier, pas depuis S3 |
+  | `KINESIS_ENDPOINT_URL` | `http://kinesis:4566/` | Publier vers LocalStack, pas vers le vrai AWS |
+  | `RUN_ID` | `Test123` | Étiquette « version » recopiée dans chaque prédiction |
+  | `TEST_RUN` | *(absente → faux)* | Vrai couperait la publication ; faux → on publie, c'est ce qu'on veut tester |
+
+- Dans `kinesis`, LocalStack attend sur le port 4566.
+- Rien n'est encore calculé.
+
+**Étape 2 — `aws kinesis create-stream` : préparer la boîte aux lettres**
+
+- Le programme `aws` (dans le Codespace) envoie une requête HTTP à `localhost:4566` ; Docker la transmet à LocalStack.
+- LocalStack crée un flux **vide** nommé `ride_predictions`, avec 1 **shard** (une file indépendante ; plusieurs shards = plus de débit), et répond « OK ». Ce flux recevra les prédictions à l'étape 3.
+
+**Étape 3 — `test_docker.py` : envoyer une course, recevoir une prédiction (le cœur du test)**
+
+1. Le script lit `event.json` : une course (ride_id 256, zones 130 → 205, 3,66 miles), encodée en base64 comme Kinesis la livrerait.
+2. Il envoie cet événement en `POST` à `localhost:8080/2015-03-31/functions/function/invocations`. Docker transmet au conteneur `backend`, où le RIE reçoit la requête.
+3. C'est la première requête : le RIE charge ton code. `lambda_function.py` appelle `model.init()`, qui :
+   - charge le modèle depuis `/app/model` (parce que `MODEL_LOCATION=/app/model`) ;
+   - crée un client Kinesis qui visera `http://kinesis:4566` (parce que `KINESIS_ENDPOINT_URL` est défini) ;
+   - enregistre le callback « publier dans Kinesis » (parce que `TEST_RUN` n'est pas défini, donc faux).
+4. Le RIE appelle `lambda_handler(event)`. **C'est le seul endroit du test où l'on calcule** :
+   - décoder le base64 → `{"ride": {...}, "ride_id": 256}` ;
+   - calculer les features → `{"PU_DO": "130_205", "trip_distance": 3.66}` ;
+   - le modèle prédit **21,29 minutes** ;
+   - construire le message `{model, version: "Test123", prediction: {ride_duration: 21.29, ride_id: 256}}`.
+5. Le callback publie ce message : `backend` envoie une requête HTTP à `kinesis:4566` (le nom de l'autre conteneur sur le réseau Docker). LocalStack range le message dans le flux `ride_predictions`.
+6. `lambda_handler` **renvoie** aussi le message ; le RIE le renvoie comme **réponse HTTP** à `test_docker.py`.
+7. Le script compare la réponse à la valeur attendue (21,3, à une décimale près). Différente → il s'arrête en erreur, et `run.sh` affiche les logs puis arrête tout.
+
+**Étape 4 — `test_kinesis.py` : vérifier que la publication a eu lieu**
+
+- Le script demande à `localhost:4566` (LocalStack) : « donne-moi le plus ancien message du flux `ride_predictions` ». Techniquement, en deux requêtes : `get_shard_iterator` obtient un **marque-page** (*iterator*) placé au début du shard (`TRIM_HORIZON`), puis `get_records` lit à partir de ce marque-page.
+- Il reçoit le message déposé à l'étape 3.5 et vérifie son contenu.
+- L'étape 3 prouvait que le **calcul** marche ; celle-ci prouve que la **publication** marche.
+
+**Étape 5 — `docker-compose down` : nettoyer**
+
+- Les deux conteneurs sont arrêtés et supprimés ; le flux disparaît avec LocalStack.
+
+#### Qui fait quoi
+
+| Acteur | Où | Calcule ? | Rôle joué |
+|---|---|---|---|
+| `test_docker.py` | Codespace | Non | L'**arrivée d'une course** (remplace le flux d'entrée `ride_events` + le mécanisme AWS qui le lit), puis le contrôle de la réponse |
+| RIE | conteneur `backend` | Non | **AWS Lambda** : traduit requête HTTP ⇄ appel de fonction |
+| Ton code (`model.py`) | conteneur `backend` | **Oui** | Décoder, prédire, publier |
+| LocalStack | conteneur `kinesis` | Non | **Kinesis** : stocke le message |
+| `test_kinesis.py` | Codespace | Non | L'**application qui lit les prédictions**, puis le contrôle du message |
+
+#### Les échanges, en tableau
+
 | # | Qui (machine) | → Qui (machine) | Adresse utilisée | Sens / contenu |
 |---|---|---|---|---|
-| ② | `aws` CLI (Codespace) | LocalStack (conteneur `kinesis`) | `http://localhost:4566` | Crée le flux `ride_predictions` |
+| ② | Programme `aws` (Codespace) | LocalStack (conteneur `kinesis`) | `http://localhost:4566` | Crée le flux `ride_predictions` |
 | ③ | `test_docker.py` (Codespace) | RIE (conteneur `backend`) | `http://localhost:8080/2015-03-31/functions/function/invocations` | Envoie `event.json`, reçoit les prédictions |
 | — | `backend` | son propre disque | `/app/model` (volume monté depuis `./model`) | Charge le modèle MLflow |
 | — | `backend` | `kinesis` | `http://kinesis:4566/` (nom de service Docker) | Publie la prédiction |
@@ -352,32 +527,101 @@ Les **ports publiés** (`"8080:8080"`, `"4566:4566"`) font le pont : `hôte:8080
 
 Pourquoi deux adresses pour le même LocalStack ? Depuis l'hôte, on passe par le port publié (`localhost:4566`). Depuis un autre conteneur, `localhost` désignerait le conteneur lui-même : il faut le nom du service (`kinesis`) **et le port interne** du conteneur. Ici les deux ports sont identiques ; si on avait publié `"5000:4566"`, l'hôte utiliserait `localhost:5000`, mais `backend` garderait `kinesis:4566`. La publication de port ne concerne que l'hôte.
 
+#### Où est défini le flux `ride_predictions` ?
+
+Il est **créé par `integration-test/run.sh`**, en deux temps :
+
+```bash
+16  export PREDICTIONS_STREAM_NAME="ride_predictions"      # choisir le nom
+...
+22  aws --endpoint-url=http://localhost:4566 \
+23      kinesis create-stream \                            # « crée un flux »
+24      --stream-name ${PREDICTIONS_STREAM_NAME} \         # nommé ride_predictions
+25      --shard-count 1                                    # avec 1 voie (shard)
+```
+
+C'est **toute** sa définition. Un flux Kinesis n'est qu'un **nom + un nombre de voies** (+ une durée de conservation des messages, 24 h par défaut) : ni colonnes, ni schéma (contrairement à une table PostgreSQL du module 5). Il transporte des octets quelconques. Le **format** des messages est une **convention entre programmes** :
+
+- celui qui écrit : `model.py` l. 66-70 construit le dictionnaire `prediction_event` ;
+- celui qui lit : `test_kinesis.py` attend exactement ce dictionnaire (`expected_record`).
+
+Le **même nom** doit apparaître à trois endroits, tous alimentés par la ligne 16 de `run.sh` :
+
+| Où | Rôle |
+|---|---|
+| `run.sh` l. 24 | Créer le flux |
+| `docker-compose.yaml` l. 7 → `lambda_function.py` l. 5 | Dire au service où publier |
+| `test_kinesis.py` l. 13 | Dire au test où lire (même valeur par défaut) |
+
+Sur AWS (bloc B), c'est Terraform qui crée le flux (module `output_kinesis_stream`), sous le nom `stg_ride_predictions-mlops-zoomcamp`. Le préfixe `stg_` = *staging* : la copie d'essai de l'infrastructure, que tu déploies à la main ; `prod_` = la version réelle, déployée par la CD (§5.5). Mêmes fichiers Terraform, variables différentes (`vars/stg.tfvars`, `vars/prod.tfvars`).
+
+**Et le flux d'entrée `ride_events` ?** En local, **il n'existe pas** : `test_docker.py` envoie la course directement au RIE, et remplace à lui seul le flux d'entrée et le mécanisme AWS qui le lit.
+
 > **Conflit de ports possible** : au module 5, `adminer` publiait aussi le port **8080**. Si ce docker-compose tourne encore : `docker ps`, puis `docker compose down` dans `05-monitoring/`.
 
 ### 5.4 Niveau 3 — l'architecture cloud (bloc B)
 
 ```
- Codespace                          AWS eu-west-1
- ─────────                          ───────────────────────────────────────────────────────────────
- test_cloud_e2e.sh                  ┌────────────────────┐   event source   ┌──────────────────────┐
- aws kinesis put-record ──HTTPS────►│ Kinesis            │   mapping        │ Lambda               │
-                                    │ stg_ride_events-…  │─────(poll)──────►│ stg_prediction_…     │
-                                    │ 2 shards, 48 h     │                  │ image : ECR          │
-                                    └────────────────────┘                  │ rôle IAM             │
-                                                                            └──┬────────┬───────┬──┘
-                                      ┌─────────────────────┐  load_model      │        │       │ logs
-                                      │ S3 stg-mlflow-…     │◄─────────────────┘        │       ▼
-                                      │ {exp}/{run}/        │                  put_record│  CloudWatch
-                                      │ artifacts/model     │                           ▼
-                                      └─────────────────────┘                ┌────────────────────┐
- aws kinesis get-records ◄──HTTPS────────────────────────────────────────────│ Kinesis            │
- (lecture manuelle du résultat)                                              │ stg_ride_predict…  │
-                                      ┌─────────────────────┐                └────────────────────┘
- terraform / docker push ──HTTPS────► │ ECR  (image)        │
-                                      └─────────────────────┘
+ CODESPACE                               │ AWS eu-west-1
+                                         │
+ ① aws kinesis put-record ──HTTPS ───────┼──► ┌───────────────────────────┐
+   (test_cloud_e2e.sh)                   │    │ Kinesis (entrée)          │
+                                         │    │ stg_ride_events-…         │
+                                         │    └─────────────▲─────────────┘
+                                         │                  │ ② interroge (≈ 1 fois/s)
+                                         │    ┌─────────────┴─────────────┐
+                                         │    │ event source mapping      │
+                                         │    │ (mécanisme du service     │
+                                         │    │ Lambda)                   │
+                                         │    └─────────────┬─────────────┘
+                                         │                  │ ③ appelle avec un lot
+                                         │    ┌─────────────▼─────────────┐
+                                         │    │ Lambda (ton code)         │ ── ④ lit le modèle ──► S3 (bucket stg-mlflow-…)
+                                         │    │ ⑤ calcule la prédiction   │
+                                         │    │ image : copie venue d'ECR │
+                                         │    │ droits : rôle IAM         │ ── ⑦ logs ──► CloudWatch Logs
+                                         │    └─────────────┬─────────────┘
+                                         │                  │ ⑥ put_record
+ ⑧ aws kinesis get-records ──HTTPS ──────┼──► ┌─────────────▼─────────────┐
+   ◄── réponse : les prédictions ────────┼─── │ Kinesis (sortie)          │
+                                         │    │ stg_ride_predictions-…    │
+                                         │    └───────────────────────────┘
+                                         │
+ Préparation (une fois) :                │
+ terraform apply ──HTTPS ────────────────┼──► crée tous les blocs AWS ci-dessus
+ docker push (pendant l'apply) ─HTTPS ───┼──► ECR (dépôt d'images Docker)
 ```
 
-Tous les appels vers AWS passent par les points d'accès publics HTTPS (port 443) de chaque service, par exemple `kinesis.eu-west-1.amazonaws.com`. Le sens important : **Lambda va chercher** les messages dans Kinesis (*pull*), Kinesis ne « pousse » pas vers Lambda.
+**Récit.** Même chaîne qu'au §5.3, mais avec les vrais services : la vraie Lambda remplace le RIE, le vrai Kinesis remplace LocalStack, S3 remplace le dossier monté, et un vrai flux d'entrée existe. Les numéros ①…⑧ du schéma correspondent aux étapes 1 à 8 ci-dessous.
+
+**Préparation (une fois)** — depuis le Codespace :
+
+- `terraform apply` crée les deux flux, le bucket S3, le dépôt ECR, la Lambda, ses droits (IAM) et l'*event source mapping* (le lien flux d'entrée → Lambda) ;
+- pendant ce `apply`, l'image Docker du service est construite et envoyée (`docker push`) dans ECR, le dépôt d'images d'AWS ;
+- le modèle est copié dans le bucket S3, et son `RUN_ID` donné à la Lambda (§7.4).
+
+**Une course traverse le système :**
+
+1. **Envoi.** `test_cloud_e2e.sh` lance `aws kinesis put-record` : le programme `aws` (Codespace) envoie une requête HTTPS à l'API Kinesis d'Amazon. La course (JSON) est déposée dans le flux `stg_ride_events-mlops-zoomcamp`.
+2. **Détection.** L'*event source mapping*, un mécanisme du service Lambda, **interroge** ce flux environ une fois par seconde (c'est lui qui demande : Kinesis ne prévient personne). Il trouve le nouveau message.
+3. **Appel.** Il met le message dans un lot et appelle la Lambda avec `event = {"Records": [...]}`, la course étant en base64 (le même format que `event.json`). S'il n'y a pas encore de conteneur Lambda prêt, AWS en démarre un à partir de l'image que Lambda a copiée et optimisée depuis ECR au déploiement.
+4. **Chargement du modèle** (au démarrage du conteneur seulement). `model.init()` télécharge le modèle depuis S3, au chemin `{exp}/{run}/artifacts/model` (identifiant de l'expérience MLflow / `RUN_ID`, modules 2-4), et crée un client Kinesis qui vise le vrai AWS. Les droits nécessaires viennent du **rôle IAM** de la Lambda : pas de clé à fournir.
+5. **Calcul.** `lambda_handler(event)` décode, calcule les features, prédit : **seul endroit où l'on calcule**, comme en local.
+6. **Publication.** Le callback envoie la prédiction (HTTPS) dans le flux `stg_ride_predictions-mlops-zoomcamp`.
+7. **Journaux.** Tout `print` et toute erreur de la Lambda arrivent dans CloudWatch Logs.
+8. **Lecture.** Toi, depuis le Codespace : `aws kinesis get-shard-iterator` puis `get-records` sur le flux de sortie, pour voir la prédiction (ou les logs CloudWatch). Le `return` de `lambda_handler` n'est lu par personne.
+
+| Service | Calcule ? | Rôle |
+|---|---|---|
+| Kinesis (×2) | Non | Stocker les courses / les prédictions (2 shards chacun, messages conservés 48 h) |
+| Event source mapping | Non | Surveiller le flux d'entrée, appeler la Lambda |
+| Lambda (ton code) | **Oui** | Prédire et publier |
+| S3 | Non | Stocker le modèle |
+| ECR | Non | Stocker l'image Docker |
+| IAM | Non | Autoriser la Lambda à lire Kinesis/S3 et écrire dans Kinesis |
+| CloudWatch | Non | Stocker les journaux |
+
+Tous les appels faits par tes outils et ton code passent par les points d'accès publics HTTPS (port 443) de chaque service, par exemple `kinesis.eu-west-1.amazonaws.com` ; l'interrogation du flux par l'event source mapping, elle, se fait à l'intérieur d'AWS. Le sens important : **Lambda va chercher** les messages dans Kinesis (*pull*), Kinesis ne « pousse » pas vers Lambda.
 
 ### 5.5 Niveau 4 — CI/CD
 
@@ -390,11 +634,29 @@ Tous les appels vers AWS passent par les points d'accès publics HTTPS (port 443
                           │
                   revue + merge
                           ▼
- push sur « develop » ──► cd-deploy.yml : terraform apply (prod) → docker build + push ECR
-                                          → copie du modèle vers S3 prod → mise à jour des variables Lambda
+ push sur « develop » ──► cd-deploy.yml : terraform plan + apply (prod) → docker build + push ECR
+                                          → RUN_ID + copie du bucket modèles dev → prod → variables Lambda
 ```
 
-**CI** (*Continuous Integration*) répond à « ce changement est-il sûr ? ». **CD** (*Continuous Delivery*) le met en service. (Au sens strict, un déploiement en prod automatique à chaque push s'appelle *Continuous Deployment* ; le *Delivery* garde une validation manuelle. Le cours dit « Delivery ».) Les deux tournent sur des *runners* GitHub (`ubuntu-latest`), pas dans ton Codespace, et lisent les identifiants AWS dans les **secrets** du dépôt.
+**Récit.** Rien ne tourne dans ton Codespace : tout s'exécute sur des **runners**, des machines Linux temporaires fournies par GitHub, créées pour un workflow puis détruites.
+
+**Partie CI — vérifier une proposition de changement :**
+
+1. Tu modifies le code sur une **branche** (une copie de travail du dépôt, ex. `feature-x`), tu la pousses sur GitHub, et tu ouvres une **Pull Request** (PR) : une demande de fusionner ta branche dans une autre (ici `develop`), que quelqu'un relit.
+2. GitHub détecte l'événement « PR vers `develop` qui touche `06-best-practices/code/` » et lance `ci-tests.yml`, qui contient deux **jobs** exécutés en parallèle, chacun sur son runner.
+3. **Job `test`** : récupère le code, installe Python 3.9 et les dépendances, lance les tests unitaires, pylint, puis le test d'intégration `run.sh` (LocalStack tourne alors sur le runner, comme au §5.3 dans ton Codespace). En l'état, cette étape échoue : voir §8.
+4. **Job `tf-plan`** : `terraform init` (télécharge le plugin AWS de Terraform et se connecte au state), puis `terraform plan` sur la prod. Terraform compare les fichiers `.tf` à ce qui existe sur AWS et **affiche** ce qui changerait, sans rien modifier. Il lui faut les identifiants AWS, lus dans les **secrets** du dépôt (des valeurs chiffrées stockées par GitHub, jamais écrites dans le code).
+5. Le résultat (vert ou rouge) s'affiche sur la PR. Un relecteur la valide et la **fusionne** (*merge*).
+
+**Partie CD — mettre en service :**
+
+6. La fusion est un **push sur `develop`**, ce qui lance `cd-deploy.yml` sur un runner.
+7. `terraform plan` puis `apply` sur la prod : crée ou met à jour l'infrastructure AWS, puis donne les noms des ressources (ses *outputs*). Le `null_resource` du module `ecr` peut, à ce moment, déjà construire et pousser une image (si `lambda_function.py` ou le `Dockerfile` ont changé).
+8. Construction de l'image Docker et envoi dans ECR. (⚠ La Lambda ne prend pas automatiquement cette nouvelle image : voir §10, remarque 10.)
+9. Récupération du `RUN_ID` (dernier objet modifié du bucket MLflow de développement), puis copie de **tout** ce bucket vers le bucket de prod (`aws s3 sync`). Ce bucket de développement est `mlflow-models-alexey`, celui de l'auteur du cours : inaccessible depuis ton compte.
+10. Attente que la Lambda soit disponible, puis mise à jour de ses variables d'environnement (nom du flux, bucket, `RUN_ID`).
+
+**CI** (*Continuous Integration*) répond à « ce changement est-il sûr ? ». **CD** (*Continuous Delivery*) le met en service. (Au sens strict, un déploiement en prod automatique à chaque push s'appelle *Continuous Deployment* ; le *Delivery* garde une validation manuelle. Le cours dit « Delivery ».)
 
 ---
 
@@ -916,6 +1178,7 @@ Je n'ai pas pu télécharger d'images Docker ni utiliser Terraform ou AWS pour �
 7. **`deploy_manual.sh`** prend « le dernier objet modifié du bucket » comme `RUN_ID` : fragile (l'auteur écrit *NOT FOR PRODUCTION*). En pratique : le Model Registry de MLflow (module 2).
 8. **Réessais Kinesis non bornés** : sans `maximum_retry_attempts` ni `bisect_batch_on_function_error` sur l'event source mapping, un seul message qui fait planter la Lambda bloque son shard jusqu'à 48 h (§6.11).
 9. **Les outils de qualité du Pipfile sont anciens** (pylint 2.14, black 22) et figés pour Python 3.9. Sur un projet neuf, un outil unique comme `ruff` remplace isort + black + pylint et bien plus vite. Pour suivre le cours, garde les versions du lock.
+10. **La CD ne met probablement pas à jour le code de la Lambda.** `cd-deploy.yml` pousse une nouvelle image sous le **même tag** `latest`, puis ne change que la *configuration* de la Lambda. Or, d'après la documentation AWS, Lambda résout le tag en une empreinte d'image (*digest*) au déploiement et **ne suit pas** automatiquement une nouvelle image poussée sous ce tag : il faut `aws lambda update-function-code --image-uri …`. Le comportement de Lambda est documenté ; l'effet sur ce workflow précis n'a pas été testé.
 
 ---
 
@@ -923,11 +1186,14 @@ Je n'ai pas pu télécharger d'images Docker ni utiliser Terraform ou AWS pour �
 
 | Notion | En une phrase |
 |---|---|
+| Serveur / port | Programme qui attend des requêtes et y répond / numéro qui le distingue sur sa machine (`localhost:8080`). |
+| HTTP / HTTPS | Le protocole requête-réponse le plus répandu / sa version chiffrée (port 443). |
 | Test unitaire | Vérifie une fonction isolée, sans réseau ni fichier, en quelques millisecondes. |
 | Mock | Faux objet de même forme que le vrai, pour rendre un test rapide et déterministe. |
 | Injection de dépendances | Donner à une classe ses outils (modèle, client) au lieu qu'elle les crée : on peut alors lui donner des faux. |
 | Test d'intégration | Démarre le vrai conteneur et le teste de l'extérieur, en HTTP. |
-| RIE | Émulateur inclus dans l'image Lambda : invoquer la fonction par un `POST` sur le port 8080. |
+| RIE | Serveur HTTP inclus dans l'image Lambda : un `POST` sur le port 8080 fait appeler `lambda_handler` (via le client d'exécution Python) et renvoie son résultat. |
+| Flux Kinesis | Un nom + un nombre de voies (+ une durée de conservation), sans schéma ; créé par `run.sh` en local, par Terraform sur AWS. |
 | LocalStack | Faux AWS local sur le port 4566 ; `--endpoint-url` / `endpoint_url` pour s'y connecter. |
 | Nom de service Docker | Adresse d'un conteneur vu depuis un autre conteneur (`kinesis:4566`). |
 | isort / black / pylint | Trier les imports / formater / analyser, réglés dans `pyproject.toml`. |
