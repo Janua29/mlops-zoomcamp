@@ -132,7 +132,7 @@ Started server process [3894]   ← worker 4
 
 En pratique, **tu n'interagis qu'avec le port 5000** — c'est le point d'entrée. Les autres sont de la plomberie interne que MLflow gère tout seul.
 
-### What is a proxy, secure proxy ?
+# What is a proxy, secure proxy ?
 
 ## Le principe
 
@@ -310,6 +310,18 @@ Deux choses à savoir dans ton cas :
 
 **Il y a un pip par environnement** — c'est le point qui rejoint ta question précédente. Chaque env conda a son propre `pip` et son propre dossier de librairies. Le `pip` de `mlopszoomcamp` installe dans `mlopszoomcamp`, celui de `base` installe dans `base`. D'où l'importance du `which pip` quand quelque chose ne marche pas.
 
+# pip vs conda vs pipenv
+
+Les trois créent des environnements isolés et installent des paquets, mais ils viennent d'époques différentes et ne visent pas le même problème.
+
+**conda** (2012, Anaconda) est un gestionnaire de paquets généraliste, pas seulement Python. Il a ses propres dépôts de paquets précompilés (le canal `defaults` d'Anaconda et le canal communautaire `conda-forge`) et peut installer des dépendances système : bibliothèques C, CUDA, MKL, GDAL, voire R. C'est sa vraie force, et la raison de son succès dans le monde scientifique à une époque où installer numpy ou scipy avec pip voulait souvent dire compiler du C. Ses environnements sont nommés et globaux (`conda activate ml`), au lieu d'être rattachés à un projet. Il est plus lourd et historiquement lent, même si son solveur s'est nettement amélioré. Attention aussi aux conditions d'Anaconda : le canal `defaults` est payant pour les organisations de plus de 200 personnes. Miniforge, qui utilise uniquement `conda-forge`, est gratuit.
+
+**pipenv** (2017) a voulu donner à Python ce que npm apporte à JavaScript : un fichier de dépendances (`Pipfile`), un fichier de verrouillage (`Pipfile.lock`) et un environnement virtuel géré automatiquement. Il a été un temps mis en avant par la communauté officielle de packaging Python, mais il est resté lent à résoudre les dépendances, ne gère pas les versions de Python lui-même et utilise un format propre au lieu du standard `pyproject.toml`. Il a ensuite été dépassé par Poetry, puis par uv. On le croise encore dans des projets existants, mais rarement dans un nouveau projet.
+
+**uv** (2024, Astral, les auteurs de Ruff) est écrit en Rust et réunit en un seul outil pip, venv, pip-tools, pipx, pyenv et l'essentiel de Poetry. Il est beaucoup plus rapide que pip, installe lui-même les versions de Python (c'est ce que fait `--python 3.12`), utilise le standard `pyproject.toml` et produit un `uv.lock` valable sur toutes les plateformes. L'environnement est rattaché au projet (le dossier `.venv`). Sa limite est celle de PyPI : il ne gère pas les dépendances système. C'est pour ça que tu as dû installer le programme Graphviz avec Homebrew, uv ne s'occupant que du paquet Python qui l'appelle.
+
+En pratique, en 2026, uv est le choix par défaut pour un projet Python, et c'est le bon choix pour le cours de Karpathy : les paquets torch de PyPI contiennent déjà tout ce qu'il faut, y compris le support MPS sur Mac. conda reste pertinent quand on dépend de bibliothèques natives complexes absentes de PyPI ou mal empaquetées, par exemple certains outils de géospatial, de bio-informatique, ou sur des clusters de calcul. Pour ce cas d'usage, il existe aussi **pixi**, qui apporte l'ergonomie de uv (projet, lockfile, rapidité) à l'écosystème conda-forge. pipenv n'a plus vraiment de raison d'être choisi aujourd'hui.
+
 # Kernel et environnement
 
 Un **kernel** est le processus qui exécute réellement ton code quand tu utilises un notebook.
@@ -414,3 +426,200 @@ Les deux préfixes ne sont que l'affichage de ce double passage. Ce qui compte r
 `pipenv run python ...` ne lance pas de shell enfant. Il exécute directement le programme avec le bon PATH, sans relire `~/.bashrc`. Conda n'a donc aucune occasion de s'interposer.
 
 C'est plus sûr, et c'est la forme que tu retrouveras dans les scripts et les Dockerfiles — où il n'y a de toute façon personne pour taper `activate`.
+
+# Dossier /tmp
+
+En IT et en data engineering, un dossier nommé `/tmp` (pour *temporary*) sert à stocker des fichiers éphémères et des données intermédiaires qui n'ont pas vocation à être conservés. Sur les systèmes d'exploitation (comme Linux), ce répertoire est généralement vidé automatiquement lors d'un redémarrage ou via des règles de nettoyage périodiques.
+
+Dans le contexte spécifique du data engineering, `/tmp` est utilisé pour les opérations suivantes :
+
+* **Traitements ETL/ELT :** Le stockage temporaire de fichiers bruts en transit. Par exemple, un script Python télécharge un fichier CSV depuis un bucket S3 ou une API, le place dans `/tmp`, le nettoie, l'insère dans une base de données, puis supprime le fichier local pour libérer de l'espace.
+* **Débordement de mémoire (Spill to disk) :** Lors de calculs intensifs avec des frameworks comme Apache Spark ou Pandas, si la mémoire vive (RAM) est saturée, le système utilise `/tmp` pour écrire temporairement des partitions de données sur le disque afin d'éviter un crash de type *Out of Memory* (OOM).
+* **Opérations de tri et de shuffle :** Les bases de données et les systèmes distribués utilisent ce dossier pour stocker les résultats partiels lorsqu'ils doivent trier ou réorganiser de très grands volumes de données entre plusieurs nœuds de calcul.
+* **Gestion des pipelines :** L'hébergement de fichiers de verrouillage (*lock files*) pour empêcher un script ou une tâche cron de se lancer deux fois en même temps, ou la création d'archives ZIP/TAR intermédiaires avant un transfert.
+
+La règle d'or concernant `/tmp` est de ne jamais y placer de données critiques ou de production, car son contenu peut être écrasé ou supprimé à tout instant sans préavis par le système.
+
+# récap : serveur, service, logiciel, adresse IP, port
+
+Ce wording est globalement compréhensible, mais il contient quelques raccourcis. En informatique, la terminologie requiert une distinction claire entre la couche matérielle, la couche réseau et la couche logicielle.
+
+Voici l'analyse et la correction de chaque affirmation :
+
+* **"Un port appartient toujours à une machine" : Presque exact, mais imprécis.**
+* **La nuance :** Un port réseau (TCP ou UDP) appartient plus précisément à une **adresse IP** (et donc à une interface réseau). Une même machine physique ou virtuelle peut posséder plusieurs cartes réseau (et donc plusieurs adresses IP), chacune disposant de ses propres ports (de 1 à 65535).
+* **Meilleur wording :** "Un port réseau est associé à l'adresse IP d'une machine."
+
+
+* **"Un service technique s'exécute/tourne/run sur un server" : Correct.**
+* **La nuance :** Les trois termes sont utilisés. "S'exécute" est le terme formel. "Tourne" est très courant à l'oral ("le service tourne en tâche de fond"). "Run" est du franglais typique. Un service technique (ou *daemon* sous Linux) s'exécute effectivement sur le système d'exploitation du serveur.
+* **Meilleur wording :** "Un service s'exécute sur un serveur."
+
+
+* **"Un server est hébergé sur une machine" : Ambigü (problème de polysémie).**
+* **La nuance :** En IT, le mot "serveur" a deux sens. Il désigne soit le **matériel** (la machine physique elle-même), soit le **logiciel** (un serveur Web comme Apache, un serveur de base de données). Si vous parlez du logiciel, on dira plutôt qu'il s'exécute sur une machine (physique ou machine virtuelle/VM). Si vous parlez du matériel, le serveur *est* la machine.
+* **Meilleur wording :** "Un serveur logiciel (ou applicatif) est hébergé et s'exécute sur une machine (physique ou virtuelle)."
+
+
+* **"Une adresse URI pointe sur un server" : Inexact.**
+* **La nuance :** Une URI (Uniform Resource Identifier) pointe vers une **ressource** précise (une page HTML, une image, un endpoint d'API, une vidéo), pas juste vers un serveur. C'est le nom de domaine (ou l'adresse IP) contenu *à l'intérieur* de l'URI qui pointe vers le serveur.
+* **Meilleur wording :** "Une URI identifie et pointe vers une ressource spécifique hébergée sur un serveur."
+
+
+
+---
+
+**La synthèse avec le bon wording :**
+
+Une **machine** (physique ou virtuelle) possède une adresse IP. Sur cette machine, s'exécute un **serveur logiciel** (ou service technique) qui écoute sur un **port** réseau spécifique de cette adresse IP. Enfin, un client utilise une **URI** pour interroger ce service et accéder à une ressource précise.
+
+## Adresse IP 127.0.0.1
+
+Oui, absolument. **127.0.0.1** est bien une adresse IP.
+
+Plus précisément, c'est une adresse IP spéciale appelée **adresse de boucle locale** (ou *loopback* en anglais). Elle est presque toujours associée au nom de domaine **localhost**.
+
+Voici comment elle s'intègre dans les concepts que nous venons de voir :
+
+* **Le circuit fermé :** Toute machine (votre ordinateur, un serveur cloud) possède cette adresse IP interne par défaut. Elle permet à la machine de s'envoyer des requêtes réseau à elle-même, sans jamais que la donnée ne sorte sur le câble réseau ou le Wifi.
+* **Dans votre exemple MLOps :** Si votre application Gunicorn et votre service MLFlow s'exécutent sur la **même** machine physique ou virtuelle, l'application Python peut utiliser l'URI `[http://127.0.0.1:5000/](http://127.0.0.1:5000/)...` pour récupérer le modèle. La machine comprend instantanément : *"Je dois envoyer cette requête au port 5000 de mon propre système"*.
+* **Le piège classique avec Docker :** C'est ici que la distinction "un conteneur = une machine isolée" prend tout son sens. Si votre script Python tourne dans un conteneur A, l'adresse `127.0.0.1` désigne **uniquement l'intérieur du conteneur A**. Si vous essayez de contacter MLFlow situé dans un conteneur B (ou sur la machine hôte) en utilisant `127.0.0.1`, la requête échouera, car le conteneur A cherchera MLFlow chez lui-même.
+
+En résumé, `127.0.0.1` est l'adresse IP qui signifie "moi-même" du point de vue du système d'exploitation qui l'utilise.
+
+# la commande curl
+
+La commande `curl` (pour *Client URL*) est l'équivalent d'un navigateur web (comme Chrome), mais qui fonctionne entièrement en mode texte dans votre terminal. Elle sert à interroger une URI et à récupérer la réponse brute du serveur.
+
+Quand vous tapez `curl [http://127.0.0.1:5000](http://127.0.0.1:5000)`, voici exactement ce que vous demandez à votre machine :
+
+* **`curl` :** Le programme client qui va émettre la requête.
+* **`http://` :** Le protocole utilisé pour la communication (le langage commun).
+* **`127.0.0.1` :** L'adresse IP de destination (ici, la machine s'adresse à elle-même).
+* **`:5000` :** Le port spécifique sur lequel le service (par exemple, votre serveur MLFlow) est censé écouter.
+
+**La différence avec un navigateur classique :**
+Si vous tapez `[http://127.0.0.1:5000](http://127.0.0.1:5000)` dans Chrome, le navigateur va récupérer la réponse du serveur et l'interpréter pour dessiner une page visuelle.
+Avec `curl`, le terminal va simplement afficher le **texte brut** renvoyé par le serveur. S'il s'agit d'une API, cela s'affichera souvent sous forme de données brutes (comme du format JSON). S'il s'agit d'une page web classique, `curl` crachera tout le code source HTML directement sur votre écran.
+
+C'est l'outil de diagnostic numéro 1 des développeurs. Il permet de vérifier très rapidement si un service technique tourne correctement sur un port précis et s'il renvoie bien la donnée attendue.
+
+
+# Faire communiquer 3 conteneur docker entre eux ? Adresseq IP et ports sont les seuls moyens de faire communiquer des services entre eux ? Une API permet a un logiciel d'exposer ses endpoint et d'y accéder --> ça ne necessite pas d'adresse IP ? Comment définir un endpoint d'un service?
+
+C'est une excellente série de questions qui touche au cœur de l'architecture logicielle moderne. Vous avez mis le doigt sur une confusion très courante concernant les API et les adresses IP.
+
+Reprenons point par point pour démêler tout cela.
+
+### 1. Les API se passent-elles d'adresses IP ? (La grande illusion)
+
+**Non, c'est une illusion d'optique !** Une API web (REST, GraphQL, etc.) utilise **toujours** une adresse IP et un port en coulisses.
+
+L'API n'est pas une technologie réseau, c'est juste un **contrat de communication** (un format de message, souvent du texte ou du JSON). Pour que ce message voyage de l'application A à l'application B, il doit emprunter le réseau informatique, et le réseau ne comprend *que* les adresses IP.
+
+**Pourquoi avez-vous l'impression qu'il n'y a pas d'IP ?**
+À cause du **DNS (Domain Name System)**. Le DNS est l'annuaire du réseau. Quand votre application appelle l'API de Stripe via `[https://api.stripe.com](https://api.stripe.com)`, votre système d'exploitation interroge d'abord un serveur DNS : *"Quelle est l'adresse IP de api.stripe.com ?"*. Le DNS répond *"C'est 3.14.25.12"*. Et votre machine fait en réalité sa requête vers cette adresse IP sur le port 443 (HTTPS).
+
+### 2. Comment faire communiquer 3 conteneurs Docker entre eux ?
+
+C'est ici que la magie du "DNS interne" de Docker opère. Vous n'avez pas besoin de coder des adresses IP en dur (ce qui serait un cauchemar, car les IP des conteneurs changent à chaque redémarrage).
+
+**La solution : Le réseau Docker (Docker Network)**
+
+1. Vous créez un réseau virtuel : `docker network create mon-reseau-app`.
+2. Vous lancez vos 3 conteneurs en les attachant à ce réseau.
+3. **Le principe clé :** Docker intègre son propre petit serveur DNS. Il associe automatiquement le **nom du conteneur** à son adresse IP interne.
+
+**Exemple :**
+
+* Conteneur 1 (nommé `frontend`)
+* Conteneur 2 (nommé `backend-api` qui écoute sur le port 8000)
+* Conteneur 3 (nommé `base-de-donnees` qui écoute sur le port 5432)
+
+Pour que le frontend contacte l'API, vous n'utiliserez pas `127.0.0.1` ni une IP complexe, mais directement le nom du conteneur dans l'URI :
+`curl http://backend-api:8000`
+
+### 3. Les adresses IP et ports sont-ils le SEUL moyen de faire communiquer des services ?
+
+Sur un réseau (entre plusieurs machines ou conteneurs), **oui**, le couple IP/Port (protocole TCP ou UDP) est incontournable. Mais si on sort du réseau pur, il existe d'autres méthodes de communication en informatique :
+
+* **Les Sockets Unix (IPC - Inter-Process Communication) :** Si deux services tournent sur la *même* machine Linux, ils peuvent communiquer non pas par le réseau (IP/Port), mais en lisant et écrivant dans un fichier spécial sur le disque dur (un socket, ex: `/var/run/mysqld/mysqld.sock`). C'est extrêmement rapide. (D'ailleurs, Docker lui-même utilise un socket Unix pour que votre terminal puisse lui donner des ordres !).
+* **Les files de messages (Message Brokers comme Kafka ou RabbitMQ) :** Les services ne se parlent plus directement. Le service A envoie un message au "facteur" (Kafka), et le service B vient lire le message quand il a le temps. (Cependant, pour parler à Kafka, les services A et B utiliseront... une IP et un port !).
+
+### 4. Qu'est-ce qu'un "endpoint" et comment le définir ?
+
+Un **endpoint** (point de terminaison), c'est l'extrémité d'un tuyau de communication dans une API. C'est le croisement entre une **action** (verbe HTTP) et une **route** (le chemin dans l'URI).
+
+Si le serveur est un bâtiment (l'adresse IP) et le port est la porte d'entrée principale, les endpoints sont les **guichets à l'intérieur du bâtiment**, chacun ayant une fonction précise.
+
+**Comment définit-on un endpoint ?**
+On le définit dans le code du serveur (le code Python/Gunicorn dont on parlait plus tôt, souvent avec des frameworks comme Flask ou FastAPI). Il est constitué de deux parties :
+
+1. **La méthode HTTP :** L'action voulue (`GET` pour lire, `POST` pour créer, `PUT` pour modifier, `DELETE` pour supprimer).
+2. **Le chemin (Path) :** La ressource ciblée.
+
+**Exemples d'endpoints pour une API de gestion d'utilisateurs :**
+
+* `GET /api/utilisateurs` : (C'est un endpoint). Son rôle est de lister tous les utilisateurs.
+* `GET /api/utilisateurs/42` : (C'est un autre endpoint). Son rôle est de donner les infos de l'utilisateur n°42.
+* `POST /api/utilisateurs` : (Encore un autre endpoint). Son rôle est de créer un nouvel utilisateur avec les données envoyées.
+
+Quand vous tapez `curl http://backend-api:8000/api/utilisateurs/42`, vous contactez la machine `backend-api` sur le port `8000`, et vous visez l'endpoint précis `/api/utilisateurs/42` en lecture (`GET` par défaut avec curl).
+
+### Autres information sur le endpoint
+
+Un **endpoint** (ou point de terminaison) est une adresse (une URL) spécifique qu'une application met à disposition pour qu'on puisse venir interagir avec l'une de ses ressources. C'est la porte d'entrée exacte d'une fonction précise d'une API.
+
+Si le serveur est un bâtiment (trouvable via son IP) et le port est la porte d'entrée, les endpoints sont les **guichets spécialisés** à l'intérieur du bâtiment. Il y a un guichet pour s'inscrire, un guichet pour modifier son profil, et un autre pour supprimer son compte.
+
+Techniquement, un endpoint est toujours le croisement de deux éléments :
+
+1. **Un chemin (le "Path") :** qui désigne la cible ou la donnée (ex: `/utilisateurs` ou `/utilisateurs/42`).
+2. **Une méthode HTTP (le "Verbe") :** qui indique l'action que l'on veut effectuer sur cette donnée (ex: `GET` pour lire, `POST` pour créer).
+
+### Exemple concret avec une API de blog
+
+Imaginons que votre application soit hébergée sur `[https://api.monblog.com](https://api.monblog.com)` (l'URL de base). Voici 4 endpoints différents que le développeur a pu définir :
+
+* **Endpoint 1 :** `GET /articles`
+* *Rôle :* Consulter la liste de tous les articles.
+
+
+* **Endpoint 2 :** `GET /articles/15`
+* *Rôle :* Consulter uniquement le contenu de l'article numéro 15.
+
+
+* **Endpoint 3 :** `POST /articles`
+* *Rôle :* Créer un nouvel article (en envoyant le texte de l'article dans la requête).
+
+
+* **Endpoint 4 :** `DELETE /articles/15`
+* *Rôle :* Supprimer l'article numéro 15.
+
+
+**À noter :** Même si le chemin est strictement identique pour les endpoints 2 et 4 (`/articles/15`), le fait de changer le verbe HTTP (`GET` au lieu de `DELETE`) en fait **deux endpoints totalement distincts** aux yeux du serveur. Chaque endpoint déclenchera une fonction différente dans le code (Python, Node.js, etc.) de l'application.
+_______________________________________________
+
+**Question** : Le path d'un endpoint correspondant nd a une url ou a une url + un port ?
+
+Le **path** (chemin) n'est ni l'URL complète, ni l'URL + le port. Il correspond **uniquement à la partie finale** de l'adresse, celle qui vient *après* l'IP (ou le nom de domaine) et le port.
+
+Pour bien comprendre, décortiquons une adresse complète (une URL) :
+
+`[http://127.0.0.1:8000/api/utilisateurs/42](http://127.0.0.1:8000/api/utilisateurs/42)`
+
+Voici l'anatomie exacte :
+
+* **`http://`** = Le protocole de communication.
+* **`127.0.0.1`** = L'hôte (l'adresse IP de la machine ou le nom de domaine).
+* **`:8000`** = Le port (la porte d'entrée du service).
+* **`/api/utilisateurs/42`** = **Le Path (le chemin).**
+
+### La nuance dans le langage courant
+
+Dans la réalité du monde du développement, vous entendrez deux façons d'en parler :
+
+1. **Côté code (strict) :** Quand un développeur écrit le code de son API (avec Python, Node.js, etc.), il ne définit **que le path**. Le serveur connaît déjà son port et sa machine. Dans le code, l'endpoint est simplement défini comme : `GET /api/utilisateurs/42`.
+2. **Côté client (courant) :** Quand on vous donne la documentation d'une API pour l'utiliser, on vous donne souvent l'URL complète (avec l'IP ou le domaine, et parfois le port) pour que vous sachiez comment joindre la machine. On dira alors par abus de langage : *"L'endpoint est `[http://api.monblog.com/articles](http://api.monblog.com/articles)`"*.
+
+En résumé, le **path** est la route interne au serveur (`/articles`), tandis que l'**URL complète** inclut la machine et le port pour trouver ce serveur sur le réseau.

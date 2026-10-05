@@ -1,5 +1,59 @@
 # Programmation orientée objet
 
+## Appeler une fonction, sans mettre de parenthèses
+
+En Python, les parenthèses `()` jouent le rôle de **déclencheur** (ou opérateur d'appel). Elles servent à dire à Python : *"Exécute cette fonction maintenant"*.
+
+Même si une méthode comme `.to_dict()` ne prend aucun argument, Python a besoin d'un moyen de faire la différence entre *parler de la fonction* (la manipuler) et *l'exécuter*.
+
+Voici la différence fondamentale :
+
+* **`mon_objet.to_dict` (sans parenthèses) :** Fait référence à la méthode elle-même. Vous obtenez l'objet "fonction".
+* **`mon_objet.to_dict()` (avec parenthèses) :** Demande à Python d'exécuter la méthode et de vous renvoyer le résultat.
+
+### Pourquoi cette séparation est-elle utile ?
+
+En Python, les fonctions et les méthodes sont des objets comme les autres (comme un nombre ou une liste). Cela signifie que vous pouvez manipuler une fonction *sans l'exécuter immédiatement*.
+
+Par exemple, vous pouvez la stocker dans une variable pour l'utiliser plus tard :
+
+```python
+class Utilisateur:
+    def to_dict(self):
+        return {"nom": "Alice", "role": "admin"}
+
+user = Utilisateur()
+
+# 1. On stocke la méthode en tant qu'objet (SANS parenthèses)
+action = user.to_dict 
+
+# À ce stade, rien ne s'est exécuté. 'action' contient la recette.
+
+# 2. Plus tard dans le code, on décide de l'exécuter (AVEC parenthèses)
+resultat = action() 
+print(resultat) # Affiche : {'nom': 'Alice', 'role': 'admin'}
+
+```
+
+C'est aussi ce qui permet de passer des fonctions à d'autres fonctions (comme des "callbacks"). Un exemple classique est la fonction `map()` ou la méthode `.sort()` :
+
+```python
+nombres = [1, -2, 3, -4]
+
+# On passe la fonction 'abs' SANS parenthèses, car on donne 
+# la recette à 'map' pour qu'il l'exécute lui-même sur chaque élément.
+absolus = list(map(abs, nombres))
+
+```
+
+Si vous aviez écrit `map(abs(), nombres)`, Python aurait essayé d'exécuter `abs()` tout de suite, avant même que `map` ne commence son travail, ce qui aurait provoqué une erreur.
+
+> **Pour résumer avec une analogie :**
+> * `to_dict` : C'est la recette de cuisine imprimée sur un papier. Vous pouvez la donner à quelqu'un ou la ranger dans un tiroir.
+> * `to_dict()` : C'est le fait d'entrer dans la cuisine et de préparer le plat.
+> 
+>
+
 ## Les classes en python : https://courspython.com/classes-et-objets.html
 
 Les classes sont un moyen de réunir des données et des fonctionnalités. Créer une nouvelle classe crée un nouveau type d'objet et ainsi de nouvelles instances de ce type peuvent être construites. Chaque instance peut avoir ses propres attributs, ce qui définit son état. Une instance peut aussi avoir des méthodes (définies par la classe de l'instance) pour modifier son état.
